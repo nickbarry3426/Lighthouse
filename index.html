@@ -1877,6 +1877,126 @@ canvas.spark { display: block; width: 100%; height: 100%; }
 .more-list .more-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .more-list .more-chevron { color: var(--text-soft); opacity: .55; }
 
+/* ---- Handwritten notes ---- */
+.notes-shell-card {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-sm);
+}
+.notes-shell-card h3 { margin-bottom: 4px; }
+.notes-shell-card p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.notes-shell-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+#note-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+#note-screen.hidden { display: none; }
+.note-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: calc(10px + var(--safe-top)) 14px 10px;
+  background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 85%, transparent));
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.note-meta { min-width: 140px; margin-right: auto; }
+.note-meta .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.note-meta .value { font-size: 14px; color: var(--text-soft); }
+.note-control-group { display: flex; gap: 6px; align-items: center; }
+.ink-dot {
+  width: 26px; height: 26px; border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.2);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.25);
+}
+.ink-dot.active { outline: 2px solid var(--accent); outline-offset: 2px; }
+.thickness-btn {
+  min-width: 32px; height: 30px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  padding: 0 8px;
+}
+.thickness-btn.active { border-color: var(--accent); color: var(--accent); }
+
+.note-canvas-wrap {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: none;
+  padding: 10px 0 calc(20px + var(--safe-bottom));
+}
+.note-canvas-stack {
+  position: relative;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+.note-chunk {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px;
+  height: 620px;
+  background:
+    linear-gradient(180deg, transparent 31px, color-mix(in srgb, var(--border) 75%, transparent) 32px);
+  background-size: 100% 32px;
+  border-bottom: 1px solid var(--border);
+  touch-action: none;
+}
+
+.processing-placeholder {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.processing-placeholder .pulse-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.processing-placeholder .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.1s var(--ease) infinite;
+}
+.processing-placeholder .dot:nth-child(2){ animation-delay: .15s; }
+.processing-placeholder .dot:nth-child(3){ animation-delay: .3s; }
+
+.note-source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+.source-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 12px;
+  text-align: left;
+}
+.source-card .meta { font-size: 12px; color: var(--muted); }
+.note-list-item { gap: 12px; }
+.note-thumb {
+  width: 58px;
+  height: 74px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  object-fit: cover;
+}
+
 </style>
 </head>
 <body>
@@ -1957,6 +2077,21 @@ canvas.spark { display: block; width: 100%; height: 100%; }
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="toss-overlay" id="toss-overlay"></div>
+<section id="note-screen" class="hidden" aria-hidden="true">
+  <div class="note-topbar">
+    <button class="btn btn-ghost btn-sm" id="note-close">Close</button>
+    <div class="note-meta">
+      <div class="label">Handwritten note</div>
+      <div class="value" id="note-source-label">No source selected</div>
+    </div>
+    <div class="note-control-group" id="ink-color-group"></div>
+    <div class="note-control-group" id="ink-thickness-group"></div>
+    <button class="btn btn-sm btn-primary" id="note-save">Save Note</button>
+  </div>
+  <div class="note-canvas-wrap" id="note-canvas-wrap">
+    <div class="note-canvas-stack" id="note-canvas-stack"></div>
+  </div>
+</section>
 
 <script id="app-script">
 /* ============================================================
@@ -1977,7 +2112,10 @@ const KEYS = {
   theme: "lh.theme",
   cache: "lh.cache.v2",
   outbox: "lh.outbox.v2",
-  settings: "lh.settings.v2"
+  settings: "lh.settings.v2",
+  noteSources: "lh.note.sources.v1",
+  noteSessions: "lh.note.sessions.v1",
+  noteDraft: "lh.note.draft.v1"
 };
 
 const TABLES = [
@@ -2054,7 +2192,13 @@ const state = {
   bodySub: "food",
   reflectSub: "pillars",
   jarFilter: { type: "all", category: "all", view: "jars" },
-  pendingToss: null // { kind: "W" | "L" } while a marble is mid-flight; render hides one marble in that jar
+  pendingToss: null, // { kind: "W" | "L" } while a marble is mid-flight; render hides one marble in that jar
+  notes: {
+    sources: loadJSON(KEYS.noteSources, []),
+    sessions: loadJSON(KEYS.noteSessions, []),
+    activeSourceId: null,
+    autosaveAt: 0
+  }
 };
 if (!state.settings.weeklyPlan) state.settings.weeklyPlan = defaultWeeklyPlan();
 if (!state.settings.weightRange) state.settings.weightRange = "1m";
@@ -2087,6 +2231,8 @@ function saveJSON(key, value) {
 function persistCache() { saveJSON(KEYS.cache, state.data); }
 function persistOutbox() { saveJSON(KEYS.outbox, state.outbox); }
 function persistSettings() { saveJSON(KEYS.settings, state.settings); }
+function persistNoteSources() { saveJSON(KEYS.noteSources, state.notes.sources); }
+function persistNoteSessions() { saveJSON(KEYS.noteSessions, state.notes.sessions); }
 
 /* ----------------------------------------------------------
    IDs, dates
@@ -2465,6 +2611,404 @@ function closeSheet() {
 scrim.addEventListener("click", closeSheet);
 
 /* ----------------------------------------------------------
+   Handwritten notes shell (local-only, future OCR/AI ready)
+   ---------------------------------------------------------- */
+const NOTE_SOURCE_TYPES = ["Book", "Class", "Project", "Personal", "Meeting", "Article"];
+const INK_COLORS = [
+  { key: "black", label: "Black", value: "#161616" },
+  { key: "navy", label: "Navy", value: "#1b325f" },
+  { key: "green", label: "Dark Green", value: "#1d5b44" },
+  { key: "burgundy", label: "Burgundy", value: "#5f1f2e" }
+];
+const PEN_SIZES = [
+  { key: "fine", label: "Fine", px: 1.8 },
+  { key: "medium", label: "Med", px: 2.8 },
+  { key: "bold", label: "Bold", px: 4.0 }
+];
+const NOTE_CHUNK_HEIGHT = 620;
+const NOTE_DRAFT_LIMIT = 220;
+const noteUI = {
+  el: document.getElementById("note-screen"),
+  stack: document.getElementById("note-canvas-stack"),
+  wrap: document.getElementById("note-canvas-wrap"),
+  source: document.getElementById("note-source-label"),
+  colorGroup: document.getElementById("ink-color-group"),
+  thicknessGroup: document.getElementById("ink-thickness-group"),
+  closeBtn: document.getElementById("note-close"),
+  saveBtn: document.getElementById("note-save"),
+  chunks: [],
+  strokeDraft: [],
+  activeStroke: null,
+  drawing: false,
+  pointerId: null,
+  lastPenAt: 0,
+  activePen: null,
+  color: INK_COLORS[0].value,
+  size: PEN_SIZES[1].px,
+  autosaveTimer: null
+};
+
+function ensureNoteSources() {
+  if (!state.notes.sources.length) {
+    state.notes.sources = NOTE_SOURCE_TYPES.map((name, i) => ({
+      id: `src_seed_${i+1}`,
+      name,
+      kind: name,
+      created_at: nowISO()
+    }));
+    persistNoteSources();
+  }
+}
+
+function ensureNoteChunk(index) {
+  if (noteUI.chunks[index]) return noteUI.chunks[index];
+  const canvas = document.createElement("canvas");
+  canvas.className = "note-chunk";
+  canvas.dataset.chunk = String(index);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cssWidth = Math.max(300, Math.floor(noteUI.stack.clientWidth - 20));
+  canvas.width = Math.floor(cssWidth * dpr);
+  canvas.height = Math.floor(NOTE_CHUNK_HEIGHT * dpr);
+  canvas.style.height = NOTE_CHUNK_HEIGHT + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  noteUI.stack.appendChild(canvas);
+  noteUI.chunks[index] = { canvas, ctx, cssWidth, dpr };
+  return noteUI.chunks[index];
+}
+
+function openNewNoteFlow() {
+  ensureNoteSources();
+  openSheet(`
+    <h2>New Note</h2>
+    <p class="lede">Choose a source first. OCR, AI cleanup, and exports come in a future release.</p>
+    <div class="field">
+      <label>Existing source</label>
+      <select class="input" id="note-source-select">
+        ${state.notes.sources.map(s => `<option value="${s.id}">${escapeHTML(s.name)} · ${escapeHTML(s.kind || "Source")}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>New source name</label>
+        <input class="input" id="note-source-name" placeholder="Ex: Systems Design Class" />
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select class="input" id="note-source-kind">${NOTE_SOURCE_TYPES.map(s => `<option>${s}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="note-source-cancel">Cancel</button>
+      <div class="spacer"></div>
+      <button class="btn" id="note-source-create">Create + Open</button>
+      <button class="btn btn-primary" id="note-source-open">Open</button>
+    </div>
+  `, () => {
+    document.getElementById("note-source-cancel").addEventListener("click", closeSheet);
+    document.getElementById("note-source-open").addEventListener("click", () => {
+      const id = document.getElementById("note-source-select").value;
+      closeSheet();
+      startHandwritingNote(id);
+    });
+    document.getElementById("note-source-create").addEventListener("click", () => {
+      const name = document.getElementById("note-source-name").value.trim();
+      if (!name) return toast("Source name is required");
+      const kind = document.getElementById("note-source-kind").value || "Personal";
+      const source = { id: uid(), name, kind, created_at: nowISO() };
+      state.notes.sources.unshift(source);
+      persistNoteSources();
+      closeSheet();
+      startHandwritingNote(source.id);
+    });
+  });
+}
+
+function startHandwritingNote(sourceId) {
+  state.notes.activeSourceId = sourceId;
+  const source = state.notes.sources.find(s => s.id === sourceId);
+  noteUI.source.textContent = source ? `${source.name} · ${source.kind}` : "Unknown source";
+  noteUI.el.classList.remove("hidden");
+  noteUI.el.setAttribute("aria-hidden", "false");
+  noteUI.stack.innerHTML = "";
+  noteUI.chunks = [];
+  noteUI.strokeDraft = [];
+  noteUI.activeStroke = null;
+  noteUI.wrap.scrollTop = 0;
+  ensureNoteChunk(0);
+  ensureNoteChunk(1);
+  buildInkControls();
+  bindNotePointerEvents();
+}
+
+function closeHandwritingNote() {
+  noteUI.el.classList.add("hidden");
+  noteUI.el.setAttribute("aria-hidden", "true");
+  noteUI.stack.innerHTML = "";
+  noteUI.chunks = [];
+  noteUI.strokeDraft = [];
+  noteUI.activeStroke = null;
+  noteUI.pointerId = null;
+  if (noteUI.autosaveTimer) clearTimeout(noteUI.autosaveTimer);
+}
+
+function buildInkControls() {
+  noteUI.colorGroup.innerHTML = INK_COLORS.map(c =>
+    `<button class="ink-dot ${c.value===noteUI.color?'active':''}" data-ink="${c.value}" title="${c.label}" style="background:${c.value}"></button>`
+  ).join("");
+  noteUI.thicknessGroup.innerHTML = PEN_SIZES.map(p =>
+    `<button class="thickness-btn ${p.px===noteUI.size?'active':''}" data-pen-size="${p.px}">${p.label}</button>`
+  ).join("");
+  noteUI.colorGroup.querySelectorAll("[data-ink]").forEach(btn => btn.addEventListener("click", () => {
+    noteUI.color = btn.dataset.ink;
+    buildInkControls();
+  }));
+  noteUI.thicknessGroup.querySelectorAll("[data-pen-size]").forEach(btn => btn.addEventListener("click", () => {
+    noteUI.size = Number(btn.dataset.penSize) || PEN_SIZES[1].px;
+    buildInkControls();
+  }));
+}
+
+function bindNotePointerEvents() {
+  if (noteUI.wrap.dataset.bound === "1") return;
+  noteUI.wrap.dataset.bound = "1";
+  noteUI.wrap.addEventListener("pointerdown", onNotePointerDown);
+  noteUI.wrap.addEventListener("pointermove", onNotePointerMove);
+  noteUI.wrap.addEventListener("pointerup", onNotePointerUp);
+  noteUI.wrap.addEventListener("pointercancel", onNotePointerUp);
+  noteUI.wrap.addEventListener("scroll", () => {
+    const count = Math.ceil(noteUI.wrap.scrollHeight / NOTE_CHUNK_HEIGHT);
+    if (noteUI.wrap.scrollTop + noteUI.wrap.clientHeight > (count - 1) * NOTE_CHUNK_HEIGHT - 180) {
+      ensureNoteChunk(count);
+    }
+  }, { passive: true });
+}
+
+function pointerPoint(e) {
+  const rect = noteUI.stack.getBoundingClientRect();
+  return { x: e.clientX - rect.left - 10, y: e.clientY - rect.top + noteUI.wrap.scrollTop - 10 };
+}
+
+function shouldAcceptPointer(e) {
+  if (e.pointerType === "pen") {
+    noteUI.lastPenAt = performance.now();
+    noteUI.activePen = e.pointerId;
+    return true;
+  }
+  if (e.pointerType === "touch") {
+    if (noteUI.activePen && performance.now() - noteUI.lastPenAt < 900) return false;
+    return false;
+  }
+  return e.pointerType === "mouse";
+}
+
+function onNotePointerDown(e) {
+  if (!state.notes.activeSourceId || !shouldAcceptPointer(e)) return;
+  e.preventDefault();
+  noteUI.pointerId = e.pointerId;
+  noteUI.drawing = true;
+  const p = pointerPoint(e);
+  noteUI.activeStroke = {
+    id: uid(),
+    source_id: state.notes.activeSourceId,
+    color: noteUI.color,
+    base: noteUI.size,
+    started_at: nowISO(),
+    points: [{ ...p, t: performance.now(), pressure: e.pressure || 0.5 }]
+  };
+  drawStrokePoint(noteUI.activeStroke, noteUI.activeStroke.points[0], noteUI.activeStroke.points[0], true);
+  noteUI.wrap.setPointerCapture(e.pointerId);
+}
+
+function onNotePointerMove(e) {
+  if (!noteUI.drawing || e.pointerId !== noteUI.pointerId || !noteUI.activeStroke) return;
+  e.preventDefault();
+  const p = pointerPoint(e);
+  const pts = noteUI.activeStroke.points;
+  const prev = pts[pts.length - 1];
+  const dist = Math.hypot(p.x - prev.x, p.y - prev.y);
+  if (dist < 0.6) return;
+  const smooth = { x: (prev.x + p.x) / 2, y: (prev.y + p.y) / 2, t: performance.now(), pressure: e.pressure || prev.pressure || 0.5 };
+  pts.push(smooth);
+  drawStrokePoint(noteUI.activeStroke, prev, smooth, false);
+  queueNoteDraftSave();
+}
+
+function onNotePointerUp(e) {
+  if (!noteUI.drawing || e.pointerId !== noteUI.pointerId || !noteUI.activeStroke) return;
+  e.preventDefault();
+  const pts = noteUI.activeStroke.points;
+  if (pts.length > 1) {
+    const end = pts[pts.length - 1];
+    drawStrokePoint(noteUI.activeStroke, pts[pts.length - 2], { ...end, pressure: 0.05 }, true);
+  }
+  noteUI.strokeDraft.push(noteUI.activeStroke);
+  if (noteUI.strokeDraft.length > NOTE_DRAFT_LIMIT) noteUI.strokeDraft.shift();
+  noteUI.activeStroke = null;
+  noteUI.drawing = false;
+  noteUI.pointerId = null;
+  queueNoteDraftSave();
+}
+
+function strokeWidth(stroke, point, taper = 1) {
+  const p = Number(point.pressure);
+  const pressure = Number.isFinite(p) && p > 0 ? p : 0.45;
+  return Math.max(0.8, stroke.base * (0.7 + pressure * 0.7) * taper);
+}
+
+function drawStrokePoint(stroke, a, b, isDot) {
+  const startChunk = Math.max(0, Math.floor(Math.min(a.y, b.y) / NOTE_CHUNK_HEIGHT) - 1);
+  const endChunk = Math.floor(Math.max(a.y, b.y) / NOTE_CHUNK_HEIGHT) + 1;
+  for (let i = startChunk; i <= endChunk; i++) {
+    const chunk = ensureNoteChunk(i);
+    const yOff = i * NOTE_CHUNK_HEIGHT;
+    const ctx = chunk.ctx;
+    ctx.strokeStyle = stroke.color;
+    ctx.fillStyle = stroke.color;
+    if (isDot) {
+      ctx.beginPath();
+      ctx.arc(a.x, a.y - yOff, strokeWidth(stroke, a, 0.55), 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+    const taper = stroke.points.length < 4 ? 0.7 : 1;
+    ctx.lineWidth = strokeWidth(stroke, b, taper);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y - yOff);
+    ctx.quadraticCurveTo(a.x, a.y - yOff, b.x, b.y - yOff);
+    ctx.stroke();
+  }
+}
+
+function queueNoteDraftSave() {
+  const now = Date.now();
+  if (now - state.notes.autosaveAt < 1500) return;
+  state.notes.autosaveAt = now;
+  if (noteUI.autosaveTimer) clearTimeout(noteUI.autosaveTimer);
+  noteUI.autosaveTimer = setTimeout(() => {
+    saveJSON(KEYS.noteDraft, {
+      source_id: state.notes.activeSourceId,
+      updated_at: nowISO(),
+      strokes: noteUI.strokeDraft.slice(-120)
+    });
+  }, 220);
+}
+
+function saveActiveNote() {
+  if (!state.notes.activeSourceId) return toast("Pick a source first");
+  if (!noteUI.strokeDraft.length) return toast("Add handwriting first");
+  const preview = renderNotePreview();
+  const note = {
+    id: uid(),
+    source_id: state.notes.activeSourceId,
+    created_at: nowISO(),
+    updated_at: nowISO(),
+    stroke_count: noteUI.strokeDraft.length,
+    strokes: noteUI.strokeDraft,
+    preview
+  };
+  state.notes.sessions.unshift(note);
+  persistNoteSessions();
+  localStorage.removeItem(KEYS.noteDraft);
+  closeHandwritingNote();
+  showProcessingSoon(note);
+  if (state.activeTab === "more") renderActive();
+}
+
+function renderNotePreview() {
+  const c = document.createElement("canvas");
+  c.width = 280; c.height = 220;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#f7f5ef";
+  ctx.fillRect(0,0,c.width,c.height);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const minX = Math.min(...noteUI.strokeDraft.flatMap(s => s.points.map(p => p.x)));
+  const maxX = Math.max(...noteUI.strokeDraft.flatMap(s => s.points.map(p => p.x)));
+  const minY = Math.min(...noteUI.strokeDraft.flatMap(s => s.points.map(p => p.y)));
+  const maxY = Math.max(...noteUI.strokeDraft.flatMap(s => s.points.map(p => p.y)));
+  const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
+  const scale = Math.min((c.width - 24) / w, (c.height - 24) / h, 1);
+  const ox = 12 - minX * scale, oy = 12 - minY * scale;
+  noteUI.strokeDraft.forEach(stroke => {
+    ctx.strokeStyle = stroke.color;
+    for (let i = 1; i < stroke.points.length; i++) {
+      const a = stroke.points[i - 1], b = stroke.points[i];
+      ctx.lineWidth = Math.max(0.8, stroke.base * 0.7 * scale);
+      ctx.beginPath();
+      ctx.moveTo(a.x * scale + ox, a.y * scale + oy);
+      ctx.lineTo(b.x * scale + ox, b.y * scale + oy);
+      ctx.stroke();
+    }
+  });
+  return c.toDataURL("image/webp", 0.72);
+}
+
+function showProcessingSoon(note) {
+  const source = state.notes.sources.find(s => s.id === note.source_id);
+  openSheet(`
+    <h2>Note saved</h2>
+    <p class="lede">${escapeHTML(source?.name || "Source")} · ${fmtRelDay(note.created_at)}</p>
+    <div class="processing-placeholder">
+      <strong>Processing soon</strong>
+      <div class="muted" style="font-size:13px;margin-top:4px">OCR, AI cleanup, and bullet summaries are queued for a future release.</div>
+      <div class="pulse-row"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="note-view-library">Open Library</button>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" id="note-done">Done</button>
+    </div>
+  `, () => {
+    document.getElementById("note-done").addEventListener("click", closeSheet);
+    document.getElementById("note-view-library").addEventListener("click", () => { closeSheet(); openNotesLibrarySheet(); });
+  });
+}
+
+function openNotesLibrarySheet(sourceId = null) {
+  ensureNoteSources();
+  const source = sourceId ? state.notes.sources.find(s => s.id === sourceId) : null;
+  const sessions = sourceId ? state.notes.sessions.filter(n => n.source_id === sourceId) : state.notes.sessions;
+  openSheet(`
+    <h2>${source ? escapeHTML(source.name) : "Notes Library"}</h2>
+    <p class="lede">${source ? "Handwritten sessions for this source." : "All local handwritten note sessions."}</p>
+    ${source ? `<div class="processing-placeholder" style="margin-top:0"><strong>Future cleaned bullets</strong><div class="muted" style="font-size:13px">AI-cleaned bullets and action items will appear here after OCR/AI integration.</div></div>` : ""}
+    <div class="list mt-md">
+      ${sessions.length ? sessions.slice(0, 30).map(s => `
+        <div class="list-row note-list-item">
+          ${s.preview ? `<img class="note-thumb" src="${s.preview}" alt="Note preview"/>` : `<div class="note-thumb"></div>`}
+          <div class="grow">
+            <div class="title">${new Date(s.created_at).toLocaleString()}</div>
+            <div class="meta">${s.stroke_count} strokes · Local JSON stored</div>
+          </div>
+        </div>
+      `).join("") : `<div class="empty">No saved handwritten sessions yet.</div>`}
+    </div>
+  `);
+}
+
+function noteSourcesMarkup() {
+  ensureNoteSources();
+  return `
+    <div class="note-source-grid">
+      ${state.notes.sources.map(src => {
+        const count = state.notes.sessions.filter(n => n.source_id === src.id).length;
+        const recent = state.notes.sessions.find(n => n.source_id === src.id);
+        return `
+          <button class="source-card" data-open-source="${src.id}">
+            <div class="title">${escapeHTML(src.name)}</div>
+            <div class="meta">${escapeHTML(src.kind || "Source")} · ${count} note${count===1?"":"s"}</div>
+            <div class="meta" style="margin-top:6px">${recent ? "Latest: " + new Date(recent.created_at).toLocaleString() : "No notes yet"}</div>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+/* ----------------------------------------------------------
    Tab routing
    ---------------------------------------------------------- */
 const view = document.getElementById("view");
@@ -2489,6 +3033,8 @@ function greetingTitle() {
 document.querySelectorAll(".tab-btn").forEach(b => {
   b.addEventListener("click", () => switchTab(b.dataset.tab));
 });
+noteUI.closeBtn.addEventListener("click", closeHandwritingNote);
+noteUI.saveBtn.addEventListener("click", saveActiveNote);
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -2586,6 +3132,7 @@ function renderToday(root) {
       <button class="quick-btn win-btn" data-quick="win"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M5 4h14v5a7 7 0 0 1-14 0V4z"/></svg>Win</button>
       <button class="quick-btn loss-btn" data-quick="failure"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 8l8 8M16 8l-8 8"/></svg>Loss</button>
       <button class="quick-btn" data-quick="journal"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>Journal</button>
+      <button class="quick-btn" data-quick="newnote"><svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M8 5h8"/><path d="M8 9h8"/><path d="M12 13v6"/><path d="M9 16h6"/></svg>New Note</button>
       <button class="quick-btn more-btn" data-quick="more"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/></svg>More</button>
     </div>
 
@@ -3019,6 +3566,7 @@ function quickAdd(kind) {
   if (kind === "win")     return openJarSheet("W");
   if (kind === "failure") return openJarSheet("L");
   if (kind === "journal") return openJournalSheet();
+  if (kind === "newnote") return openNewNoteFlow();
   if (kind === "more")    return openMoreSheet();
   if (kind === "reflect") { state.reflectSub = "pillars"; switchTab("reflect"); }
 }
@@ -4106,6 +4654,15 @@ function openJournalSheet() {
 function renderMore(root) {
   const totalRows = TABLES.reduce((s,t)=>s+(state.data[t]||[]).length,0);
   root.innerHTML = `
+    <div class="notes-shell-card">
+      <h3>Handwritten Notes</h3>
+      <p>Apple Pencil-first local capture. OCR and AI cleanup are coming soon.</p>
+      <div class="notes-shell-actions">
+        <button class="btn btn-primary" data-new-note>New Note</button>
+        <button class="btn" data-open-note-library>Source Library</button>
+      </div>
+      <div style="margin-top:12px">${noteSourcesMarkup()}</div>
+    </div>
     <div class="card">
       <h3>Settings</h3>
       <div class="kv"><div class="k">Theme</div><div class="v"><select class="input" id="theme-select" style="padding:8px 10px"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div>
@@ -4140,6 +4697,9 @@ function renderMore(root) {
   const theme = root.querySelector("#theme-select");
   theme.value = state.settings.theme || "system";
   theme.addEventListener("change", () => applyTheme(theme.value));
+  root.querySelector("[data-new-note]").addEventListener("click", openNewNoteFlow);
+  root.querySelector("[data-open-note-library]").addEventListener("click", () => openNotesLibrarySheet());
+  root.querySelectorAll("[data-open-source]").forEach(b => b.addEventListener("click", () => openNotesLibrarySheet(b.dataset.openSource)));
   root.querySelector("[data-export]").addEventListener("click", exportData);
   root.querySelector("[data-refresh]").addEventListener("click", async () => { await loadFromCloud(); renderActive(); toast("Refreshed"); });
   root.querySelector("[data-clear-pin]").addEventListener("click", () => { if (confirm("Reset PIN on this device?")) { localStorage.removeItem(KEYS.pin); location.reload(); } });
