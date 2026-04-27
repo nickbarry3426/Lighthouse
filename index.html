@@ -3475,6 +3475,30 @@ function attachSessionToBookContext(note, context) {
   });
 }
 
+function attachSessionToWorkspaceContext(note, context) {
+  if (!context || !context.workspace_type || context.workspace_type === "books") return;
+  const ws = ensureWorkspaceForKind(context.workspace_type);
+  const sourceId = context.source_id || note.source_id || null;
+  const sessionRow = createWorkspaceEntity("note_sessions", {
+    workspace_id: ws.id,
+    folder_id: context.folder_id || null,
+    source_id: sourceId,
+    started_at: note.created_at,
+    ended_at: note.created_at,
+    raw_handwritten_session_ref: note.id,
+    manual_text_note: context.manual_text_note || null
+  });
+  createAttachmentMetadata({
+    workspace_id: ws.id,
+    session_id: sessionRow.id,
+    source_id: sourceId,
+    filename: `handwritten-${note.id}.json`,
+    mime_type: "application/json",
+    byte_size: JSON.stringify(note.strokes || []).length,
+    local_ref: note.id
+  });
+}
+
 function saveActiveNote() {
   if (!state.notes.activeSourceId) return toast("Pick a source first");
   if (!noteUI.strokeDraft.length) return toast("Add handwriting first");
@@ -3496,6 +3520,7 @@ function saveActiveNote() {
   state.notes.sessions.unshift(note);
   persistNoteSessions();
   attachSessionToBookContext(note, context);
+  attachSessionToWorkspaceContext(note, context);
   localStorage.removeItem(KEYS.noteDraft);
   closeHandwritingNote();
   if (context?.workspace_type === "books") {
@@ -3825,49 +3850,114 @@ function closeWorkspace() {
   renderActive();
 }
 
-function workspaceLegacyPreviewHTML(kind) {
-  const ws = workspaceCollection("workspaces").find(w => w.type === kind);
-  if (!ws) return "";
+function workspaceData(kind) {
+  const ws = ensureWorkspaceForKind(kind);
+  const folders = readWorkspaceEntities("folders", f => f.workspace_id === ws.id);
+  const sources = readWorkspaceEntities("sources", s => s.workspace_id === ws.id);
   const notes = readWorkspaceEntities("cleaned_note_blocks", n => n.workspace_id === ws.id);
   const sessions = readWorkspaceEntities("note_sessions", s => s.workspace_id === ws.id);
-  const legacyCount = notes.filter(n => n.source === "legacy_journal").length;
-  return `
-    <div class="workspace-placeholder">
-      <strong>Local entities</strong>
-      <div class="muted" style="font-size:13px;margin-top:4px">${notes.length} note block${notes.length===1?"":"s"}, ${sessions.length} session${sessions.length===1?"":"s"}${kind === "reflection" ? ` · ${legacyCount} legacy journal` : ""}</div>
-      ${kind === "reflection" && legacyCount ? `<div class="muted" style="font-size:13px;margin-top:6px">Legacy journal entries are mirrored here for backward-compatible browsing.</div>` : ""}
-    </div>
-  `;
+  const tags = readWorkspaceEntities("tags", t => t.workspace_id === ws.id);
+  return { ws, folders, sources, notes, sessions, tags };
 }
 
-function createSampleWorkspaceItem(kind) {
-  const ws = ensureWorkspaceForKind(kind);
-  const folder = createWorkspaceEntity("folders", {
+function workspaceFolderName(folders, folderId) {
+  if (!folderId) return "No folder";
+  return folders.find(f => f.id === folderId)?.name || "No folder";
+}
+
+function promptCreateWorkspaceFolder(kind) {
+  const { ws } = workspaceData(kind);
+  const name = (prompt("Folder name?") || "").trim();
+  if (!name) return null;
+  return createWorkspaceEntity("folders", { workspace_id: ws.id, name, parent_folder_id: null });
+}
+
+function promptCreateWorkspaceSource(kind, cfg = {}) {
+  const { ws, folders } = workspaceData(kind);
+  const name = (prompt(cfg.namePrompt || "Name?") || "").trim();
+  if (!name) return null;
+  const folderHint = folders.length ? `\nFolders:\n${folders.map((f, i) => `${i + 1}. ${f.name}`).join("\n")}` : "";
+  const choice = (prompt(`Folder number (optional).${folderHint}`) || "").trim();
+  const idx = Number(choice) - 1;
+  const folder = idx >= 0 ? folders[idx] : null;
+  return createWorkspaceEntity("sources", {
     workspace_id: ws.id,
-    name: `${WORKSPACE_KIND_LABELS[kind] || "Workspace"} Inbox`,
-    parent_folder_id: null
+    folder_id: folder?.id || null,
+    name,
+    source_type: cfg.sourceType || "note",
+    status: cfg.status || "active",
+    checkin_id: cfg.checkinId || null
   });
-  const source = createWorkspaceEntity("sources", {
-    workspace_id: ws.id,
-    folder_id: folder.id,
-    name: `${WORKSPACE_KIND_LABELS[kind] || "Workspace"} Source`,
-    source_type: kind === "books" ? "book" : "note"
-  });
-  const session = createWorkspaceEntity("note_sessions", {
-    workspace_id: ws.id,
-    folder_id: folder.id,
+}
+
+function promptWorkspaceManualNote(kind, source) {
+  const text = (prompt("Manual note text?") || "").trim();
+  if (!text) return null;
+  appendWorkspaceNote(ensureWorkspaceForKind(kind).id, text, { source_id: source.id, created_by: "manual" });
+  return text;
+}
+
+function ensureWorkspaceNoteSourceForEntry(kind, source) {
+  const existing = state.notes.sources.find(s => s.workspace_type === kind && s.parent_item_id === source.id);
+  if (existing) return existing;
+  const noteSource = {
+    id: uid(),
+    name: source.name || `${WORKSPACE_KIND_LABELS[kind]} Item`,
+    kind: WORKSPACE_KIND_LABELS[kind],
+    workspace_type: kind,
+    parent_item_id: source.id,
     source_id: source.id,
-    started_at: nowISO(),
-    ended_at: nowISO(),
-    raw_handwritten_session_ref: null,
-    manual_text_note: "Sample local session"
-  });
-  appendWorkspaceNote(ws.id, `Sample note for ${WORKSPACE_KIND_LABELS[kind] || kind}`, {
+    folder_id: source.folder_id || null,
+    created_at: nowISO()
+  };
+  state.notes.sources.unshift(noteSource);
+  persistNoteSources();
+  return noteSource;
+}
+
+function openWorkspaceHandwriting(kind, source) {
+  const noteSource = ensureWorkspaceNoteSourceForEntry(kind, source);
+  startHandwritingNote(noteSource.id, {
+    workspace_type: kind,
+    workspace_id: source.workspace_id,
     source_id: source.id,
-    session_id: session.id,
-    tags: ["sample", kind]
+    parent_item_id: source.id,
+    folder_id: source.folder_id || null
   });
-  return { ws, folder, source, session };
+}
+
+function renderWorkspaceRows(kind, data) {
+  const rows = data.sources.slice().sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
+  if (!rows.length) return `<div class="empty">No items yet. Add your first one.</div>`;
+  return `<div class="list">${rows.map(src => {
+    const noteCount = data.notes.filter(n => n.source_id === src.id).length;
+    const sessionCount = data.sessions.filter(s => s.source_id === src.id).length;
+    const tagNames = data.tags.filter(t => t.source_id === src.id).map(t => t.label).filter(Boolean);
+    const metaBits = [
+      workspaceFolderName(data.folders, src.folder_id),
+      src.status ? `Status: ${src.status}` : "",
+      src.checkin_id ? "Linked check-in" : "",
+      tagNames.length ? `Tags: ${tagNames.join(", ")}` : ""
+    ].filter(Boolean);
+    return `
+      <div class="list-row" style="align-items:flex-start;flex-direction:column;gap:8px">
+        <div style="display:flex;width:100%;justify-content:space-between;gap:10px">
+          <div class="grow">
+            <div class="title">${escapeHTML(src.name || "Untitled")}</div>
+            <div class="meta">${escapeHTML(metaBits.join(" · "))}</div>
+          </div>
+          <div class="right">${noteCount} notes · ${sessionCount} ink</div>
+        </div>
+        <div style="width:100%">
+          ${(data.notes.filter(n => n.source_id === src.id).slice(0, 2).map(n => `<div class="meta" style="margin-top:4px">• ${escapeHTML((n.content || "").slice(0, 120) || "(empty)")}</div>`).join("")) || `<div class="meta">No manual notes yet.</div>`}
+        </div>
+        <div class="sheet-actions" style="width:100%">
+          <button class="btn btn-sm" data-ws-note="${src.id}">Add manual note</button>
+          <button class="btn btn-sm" data-ws-ink="${src.id}">Add handwritten note</button>
+        </div>
+      </div>
+    `;
+  }).join("")}</div>`;
 }
 
 function booksWorkspaceRecord() {
@@ -4212,40 +4302,106 @@ function renderWorkspacePage(root, key) {
   const workspace = WORKSPACES.find(w => w.key === key);
   if (!workspace) return closeWorkspace();
   if (key === "books") return renderBooksWorkspacePage(root);
+  const data = workspaceData(key);
+  const recentCheckins = (state.data.Pillar_Checkins || []).slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).slice(0,8);
+  const showCheckinLink = key === "reflection";
+  const workspaceCopy = {
+    reflection: "Dated reflection entries with optional check-in context and quiet writing space.",
+    learning: "Classes, concepts, tutorials, and skills with folders, topics, tags, and notes.",
+    projects: "Lightweight project records with status, decisions, notes, and working sessions.",
+    work: "Practical work notes organized into folders with minimal overhead.",
+    general: "Catch-all workspace for anything that does not fit elsewhere."
+  };
+
   root.innerHTML = `
     <div class="workspace-page">
       <button class="workspace-back" id="workspace-back">← Back to dashboard</button>
       <div class="card">
-        <div class="section-title" style="margin:0 0 8px"><h4>Workspace</h4></div>
+        <div class="section-title" style="margin:0 0 8px"><h4>${workspace.label}</h4></div>
         <h2>${workspace.label}</h2>
-        <p class="muted">This workspace now writes to a future-ready local model while preserving current dashboard structures.</p>
-      </div>
-      <div class="workspace-placeholder">
-        <strong>Future-ready local model enabled</strong>
-        <div class="muted" style="font-size:13px;margin-top:4px">Versioned storage and migration helpers are active locally. Existing check-ins, workouts, weight, food, and journal data remain untouched.</div>
+        <p class="muted">${workspaceCopy[key] || "Workspace notes."}</p>
         <div class="sheet-actions" style="margin-top:10px">
-          <button class="btn btn-sm" id="workspace-add-sample">Create sample local item</button>
-          <button class="btn btn-sm" id="workspace-open-store">View local counts</button>
+          <button class="btn btn-sm btn-primary" id="workspace-add-item">+ Add ${key === "projects" ? "project" : "item"}</button>
+          <button class="btn btn-sm" id="workspace-add-folder">+ Folder</button>
+          ${showCheckinLink ? `<button class="btn btn-sm" id="workspace-link-checkin">Link check-in</button>` : ""}
         </div>
       </div>
-      ${workspaceLegacyPreviewHTML(key)}
+
+      ${showCheckinLink ? `
+      <div class="workspace-placeholder">
+        <strong>Legacy Reflection entries</strong>
+        <div class="muted" style="font-size:13px;margin-top:4px">Journal history is mirrored here as legacy Reflection notes and remains intact.</div>
+      </div>
+      ` : ""}
+
+      <div class="card">
+        <div class="section-title" style="margin:0 0 8px"><h4>Items</h4></div>
+        ${renderWorkspaceRows(key, data)}
+      </div>
     </div>
   `;
   root.querySelector("#workspace-back").addEventListener("click", closeWorkspace);
-  const sampleBtn = root.querySelector("#workspace-add-sample");
-  if (sampleBtn) sampleBtn.addEventListener("click", () => {
-    createSampleWorkspaceItem(key);
-    toast("Sample workspace item saved locally");
+
+  const addFolder = root.querySelector("#workspace-add-folder");
+  if (addFolder) addFolder.addEventListener("click", () => {
+    const created = promptCreateWorkspaceFolder(key);
+    if (!created) return;
+    toast("Folder saved");
     renderActive();
   });
-  const viewBtn = root.querySelector("#workspace-open-store");
-  if (viewBtn) viewBtn.addEventListener("click", () => {
-    const payload = buildWorkspaceSyncPayload();
-    const summary = WORKSPACE_ENTITY_BUCKETS.map(name => `${name}: ${(payload.entities[name] || []).length}`).join("\n");
-    openSheet(`<h2>Workspace local store</h2><pre style="white-space:pre-wrap;font-size:12px">${escapeHTML(summary)}</pre><div class="sheet-actions"><span class="spacer"></span><button class="btn btn-primary" id="workspace-store-close">Close</button></div>`, () => {
-      document.getElementById("workspace-store-close").addEventListener("click", closeSheet);
+
+  const addItem = root.querySelector("#workspace-add-item");
+  if (addItem) addItem.addEventListener("click", () => {
+    let checkinId = null;
+    if (key === "reflection") {
+      const pick = (prompt("Optional check-in number to link (from newest first), or leave blank") || "").trim();
+      const index = Number(pick) - 1;
+      if (index >= 0 && recentCheckins[index]) checkinId = recentCheckins[index].id;
+    }
+    const source = promptCreateWorkspaceSource(key, {
+      namePrompt: key === "projects" ? "Project name?" : key === "learning" ? "Topic / class name?" : "Entry title?",
+      sourceType: key === "projects" ? "project" : key === "learning" ? "topic" : key === "reflection" ? "reflection_entry" : "note",
+      status: key === "projects" ? ((prompt("Status? (active, blocked, paused, done)") || "active").trim() || "active") : "active",
+      checkinId
     });
+    if (!source) return;
+    if (key === "learning") {
+      const tags = (prompt("Tags (comma separated, optional)") || "").split(",").map(t => t.trim()).filter(Boolean);
+      tags.forEach(label => createWorkspaceEntity("tags", { workspace_id: data.ws.id, source_id: source.id, label, normalized: label.toLowerCase() }));
+    }
+    const noteText = promptWorkspaceManualNote(key, source);
+    if (noteText) toast("Item and note saved");
+    else toast("Item saved");
+    renderActive();
   });
+
+  const linkCheckin = root.querySelector("#workspace-link-checkin");
+  if (linkCheckin) linkCheckin.addEventListener("click", () => {
+    if (!recentCheckins.length) return toast("No check-ins available yet");
+    const choice = (prompt(`Pick check-in number:\n${recentCheckins.map((c, i) => `${i + 1}. ${c.date} · ${c.one_next_step || c.needs_attention || "No note"}`).join("\n")}`) || "").trim();
+    const idx = Number(choice) - 1;
+    const picked = idx >= 0 ? recentCheckins[idx] : null;
+    if (!picked) return;
+    const src = promptCreateWorkspaceSource(key, { namePrompt: "Reflection title?", sourceType: "reflection_entry", checkinId: picked.id });
+    if (!src) return;
+    promptWorkspaceManualNote(key, src);
+    toast("Reflection linked to check-in");
+    renderActive();
+  });
+
+  root.querySelectorAll("[data-ws-note]").forEach(btn => btn.addEventListener("click", () => {
+    const src = data.sources.find(s => s.id === btn.dataset.wsNote);
+    if (!src) return;
+    const text = promptWorkspaceManualNote(key, src);
+    if (!text) return;
+    toast("Manual note saved");
+    renderActive();
+  }));
+  root.querySelectorAll("[data-ws-ink]").forEach(btn => btn.addEventListener("click", () => {
+    const src = data.sources.find(s => s.id === btn.dataset.wsInk);
+    if (!src) return;
+    openWorkspaceHandwriting(key, src);
+  }));
 }
 
 function bodySnapshotHTML({ calories, protein, motionMinutes, weeklyMinutes, motionGoal }) {
@@ -5676,9 +5832,9 @@ function renderJournal(root) {
   const list = (state.data.Journal_Entries || []).slice().sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   root.innerHTML = `
     <div class="card">
-      <div class="row-between"><div><h3>Reflection journal</h3><div class="muted" style="font-size:13px">Prayer, gratitude, decisions, stress, career, or anything else.</div></div><button class="btn btn-sm btn-primary" data-add-journal>Entry</button></div>
+      <div class="row-between"><div><h3>Reflection entries</h3><div class="muted" style="font-size:13px">Prayer, gratitude, decisions, stress, career, or anything else.</div></div><button class="btn btn-sm btn-primary" data-add-journal>Entry</button></div>
     </div>
-    <div class="field mt-md"><input class="input" id="journal-search" placeholder="Search journal" /></div>
+    <div class="field mt-md"><input class="input" id="journal-search" placeholder="Search reflections" /></div>
     <div class="chip-row mb-md">${["All", ...JOURNAL_TYPES].map((t,i)=>`<button class="chip ${i===0?'active':''}" data-journal-filter="${escapeHTML(t)}">${escapeHTML(t)}</button>`).join("")}</div>
     <div id="journal-list">${renderJournalList(list)}</div>
   `;
