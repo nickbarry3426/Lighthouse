@@ -2327,6 +2327,15 @@ const WORKSPACES = [
   { key: "general", label: "General", icon: "general" }
 ];
 const WORKSPACE_MODEL_VERSION = 1;
+const WORKSPACE_SYNC_ACTIONS = {
+  create: "createWorkspaceItem",
+  update: "updateWorkspaceItem",
+  list: "listWorkspaceData",
+  appendBlock: "appendNoteBlock",
+  saveSession: "saveNoteSession",
+  saveAttachment: "saveAttachmentMetadata",
+  migrateLegacyJournal: "migrateLegacyJournalToReflection"
+};
 const WORKSPACE_ENTITY_BUCKETS = [
   "workspaces",
   "folders",
@@ -2621,14 +2630,127 @@ function buildWorkspaceSyncPayload() {
   };
 }
 
-function queueWorkspaceSyncJob(reason = "manual") {
-  // Reserved for future backend sync integration.
-  return { queued: false, reason, at: nowISO() };
+function buildWorkspaceActionPayload(action, table, row = {}, extras = {}) {
+  return {
+    action,
+    table,
+    row: {
+      id: row.id || uid(),
+      created_at: row.created_at || nowISO(),
+      updated_at: nowISO(),
+      date: row.date || todayISO(),
+      device_source: row.device_source || DEVICE_ID,
+      sync_status: row.sync_status || (isCloudConfigured() ? "syncing" : "local"),
+      ...row
+    },
+    source: "lighthouse-web",
+    workspace_version: state.workspaceStore?.version || WORKSPACE_MODEL_VERSION,
+    ...extras
+  };
 }
 
 function markWorkspaceEntityForSync(entity, id, action) {
-  // Reserved for future backend sync integration.
-  return { entity, id, action, at: nowISO() };
+  return buildWorkspaceActionPayload(
+    action === "create" ? WORKSPACE_SYNC_ACTIONS.create : WORKSPACE_SYNC_ACTIONS.update,
+    mapWorkspaceEntityToSheet(entity),
+    { id },
+    { workspace_entity: entity }
+  );
+}
+
+function queueWorkspaceSyncJob(reason = "manual", jobs = []) {
+  if (!isCloudConfigured()) return { queued: false, reason, jobs, mode: "local-only", at: nowISO() };
+  // NOTE: Deliberately not auto-enqueued into existing health outbox until backend rollout is complete.
+  return { queued: true, reason, jobs, mode: "ready", at: nowISO() };
+}
+
+function mapWorkspaceEntityToSheet(entity) {
+  const map = {
+    workspaces: "Workspaces",
+    folders: "Folders",
+    sources: "NoteSessions",
+    note_sessions: "NoteSessions",
+    cleaned_note_blocks: "NoteBlocks",
+    attachments: "Attachments",
+    tags: "Tags"
+  };
+  return map[entity] || "Workspaces";
+}
+
+function prepareWorkspaceSessionPayload(session, context = {}) {
+  return buildWorkspaceActionPayload(WORKSPACE_SYNC_ACTIONS.saveSession, "NoteSessions", {
+    ...session,
+    workspace_id: context.workspace_id || session.workspace_id || null,
+    parent_type: context.parent_type || session.parent_type || null,
+    parent_id: context.parent_id || session.parent_id || null,
+    chapter_id: context.chapter_id || session.chapter_id || null,
+    raw_input_type: session.raw_input_type || "handwritten_or_text",
+    cleaning_status: session.cleaning_status || "pending_ai"
+  });
+}
+
+function prepareWorkspaceNoteBlockPayload(block, context = {}) {
+  return buildWorkspaceActionPayload(WORKSPACE_SYNC_ACTIONS.appendBlock, "NoteBlocks", {
+    ...block,
+    workspace_id: context.workspace_id || block.workspace_id || null,
+    parent_type: context.parent_type || block.parent_type || null,
+    parent_id: context.parent_id || block.parent_id || null,
+    chapter_id: context.chapter_id || block.chapter_id || null,
+    format: block.format || "plain_text",
+    block_type: block.block_type || "note"
+  });
+}
+
+function prepareAttachmentMetadataPayload(attachment, context = {}) {
+  return buildWorkspaceActionPayload(WORKSPACE_SYNC_ACTIONS.saveAttachment, "Attachments", {
+    ...attachment,
+    workspace_id: context.workspace_id || attachment.workspace_id || null,
+    parent_type: context.parent_type || attachment.parent_type || null,
+    parent_id: context.parent_id || attachment.parent_id || null,
+    chapter_id: context.chapter_id || attachment.chapter_id || null,
+    attachment_type: attachment.attachment_type || "image",
+    ocr_status: attachment.ocr_status || "pending"
+  });
+}
+
+function prepareWorkspaceListPayload(workspaceId = null) {
+  return {
+    action: WORKSPACE_SYNC_ACTIONS.list,
+    workspace_id: workspaceId || "",
+    source: "lighthouse-web",
+    workspace_version: state.workspaceStore?.version || WORKSPACE_MODEL_VERSION
+  };
+}
+
+function prepareLegacyJournalMigrationPayload(workspaceId = null) {
+  return {
+    action: WORKSPACE_SYNC_ACTIONS.migrateLegacyJournal,
+    workspace_id: workspaceId || "",
+    source: "lighthouse-web",
+    migrated_at: nowISO()
+  };
+}
+
+function buildAIPipelinePlaceholder(input = {}, context = {}) {
+  return {
+    stage: "placeholder",
+    accepted_input: {
+      image_ref: input.image_ref || null,
+      ocr_text: input.ocr_text || "",
+      workspace_id: context.workspace_id || null,
+      parent_type: context.parent_type || null,
+      parent_id: context.parent_id || null,
+      chapter_id: context.chapter_id || null
+    },
+    todo: [
+      "securely call AI model server-side only",
+      "validate structured JSON output schema",
+      "append NoteBlocks with stable IDs",
+      "attach session + attachment metadata",
+      "link notes to workspace parent entities"
+    ],
+    generated_at: nowISO()
+  };
 }
 
 function migrateLegacyJournalToWorkspaceStore() {
