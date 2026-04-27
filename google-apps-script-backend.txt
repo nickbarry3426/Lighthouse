@@ -1,0 +1,384 @@
+var SHEET_TABS = [
+  "Food_Entries",
+  "Food_Presets",
+  "Workout_Entries",
+  "Weight_Entries",
+  "Jar_Entries",
+  "Pillar_Checkins",
+  "Advice_Jar_Entries",
+  "Journal_Entries",
+  "Projects",
+  "Settings"
+];
+
+var DEBUG_LOG_TAB = "Sync_Debug";
+
+// Optional but recommended:
+// Paste your Google Sheet ID between the quotes to force this backend to use
+// one exact spreadsheet. Leave blank if this Apps Script project is bound to
+// the correct spreadsheet.
+var SPREADSHEET_ID = "";
+
+var SCHEMAS = {
+  Food_Entries: ["id","created_at","updated_at","date","device_source","sync_status","food_item","calories","protein","health_score","meal_category"],
+  Food_Presets: ["id","created_at","updated_at","date","device_source","sync_status","name","calories","protein","default_health_score","meal_category"],
+  Workout_Entries: ["id","created_at","updated_at","date","device_source","sync_status","category","duration","intensity","intensity_by_category","notes"],
+  Weight_Entries: ["id","created_at","updated_at","date","device_source","sync_status","weight"],
+  Jar_Entries: ["id","created_at","updated_at","date","device_source","sync_status","type","title","detail","lesson","category"],
+  Pillar_Checkins: ["id","created_at","updated_at","date","device_source","sync_status","overall_rating","pillar_faith","pillar_sleep","pillar_eating","pillar_exercise","pillar_connection","pillar_contribution","gratitude","needs_attention","one_next_step"],
+  Advice_Jar_Entries: ["id","created_at","updated_at","date","device_source","sync_status","pillar","text"],
+  Journal_Entries: ["id","created_at","updated_at","date","device_source","sync_status","title","journal_type","entry_text","tags"],
+  Projects: ["id","created_at","updated_at","date","device_source","sync_status","project_title","category","status","why_it_matters","next_step","notes","date_updated"],
+  Settings: ["id","created_at","updated_at","date","device_source","sync_status","key","value"]
+};
+
+function doGet(e) {
+  var params = e && e.parameter ? e.parameter : {};
+  var action = String(params.action || "getData").trim();
+  var callback = params.callback;
+  var data;
+
+  if (action === "getData") {
+    data = { ok: true, tables: getData() };
+  } else if (action === "getSettings") {
+    data = { ok: true, settings: getRows("Settings") };
+  } else {
+    data = { ok: false, error: "Unknown action: " + action };
+  }
+
+  return callback ? jsonpResponse(callback, data) : jsonResponse(data, data.ok ? 200 : 400);
+}
+
+function doPost(e) {
+  try {
+    var parsed = parsePostPayload(e);
+    var payload = parsed.payload;
+    var action = payload.action;
+    var table = payload.table;
+    var row = extractPayloadRow(payload);
+
+    if (SHEET_TABS.indexOf(table) === -1 && action !== "updateSettings") {
+      logSyncDebug("unknown_table", action, table, row, parsed.raw);
+      return jsonResponse({ ok: false, error: "Unknown table" }, 400);
+    }
+
+    if (action === "addEntry") {
+      if (!row.id) logSyncDebug("missing_id_add", action, table, row, parsed.raw);
+      return jsonResponse({ ok: true, row: addEntry(table, row) });
+    }
+    if (action === "updateEntry") {
+      if (!row.id) logSyncDebug("missing_id_update", action, table, row, parsed.raw);
+      return jsonResponse({ ok: true, row: updateEntry(table, row) });
+    }
+    if (action === "deleteEntry") {
+      return jsonResponse({ ok: true, deleted: deleteEntry(table, row.id) });
+    }
+    if (action === "updateSettings") {
+      return jsonResponse({ ok: true, row: updateEntry("Settings", row) });
+    }
+
+    logSyncDebug("unknown_action", action, table, row, parsed.raw);
+    return jsonResponse({ ok: false, error: "Unknown action" }, 400);
+  } catch (err) {
+    logSyncDebug("post_error", "", "", {}, e && e.postData ? e.postData.contents : String(err));
+    return jsonResponse({ ok: false, error: String(err) }, 500);
+  }
+}
+
+function setupSheets() {
+  var ss = getSpreadsheet();
+  for (var i = 0; i < SHEET_TABS.length; i++) {
+    var name = SHEET_TABS[i];
+    var sheet = ss.getSheetByName(name);
+    if (!sheet) sheet = ss.insertSheet(name);
+    ensureHeaders(sheet, name);
+  }
+  ensureDebugLog();
+}
+
+function ensureHeaders(sheet, table) {
+  var headers = SCHEMAS[table];
+  var existingLastCol = Math.max(sheet.getLastColumn(), 1);
+  var existing = sheet.getRange(1, 1, 1, existingLastCol).getValues()[0];
+  var hasHeaders = existing.some(function(cell) { return cell !== ""; });
+
+  if (!hasHeaders) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  } else {
+    for (var i = 0; i < headers.length; i++) {
+      if (existing.indexOf(headers[i]) === -1) {
+        sheet.getRange(1, sheet.getLastColumn() + 1).setValue(headers[i]);
+        existing.push(headers[i]);
+      }
+    }
+  }
+
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, sheet.getLastColumn());
+}
+
+function getData() {
+  setupSheets();
+  var out = {};
+  for (var i = 0; i < SHEET_TABS.length; i++) {
+    var name = SHEET_TABS[i];
+    out[name] = getRows(name);
+  }
+  return out;
+}
+
+function getRows(table) {
+  var sheet = getSpreadsheet().getSheetByName(table);
+  if (!sheet) return [];
+
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+
+  var headers = values[0].map(function(h) { return String(h); });
+  var rows = [];
+
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    var hasValue = row.some(function(cell) { return cell !== ""; });
+    if (!hasValue) continue;
+
+    var obj = {};
+    for (var c = 0; c < headers.length; c++) {
+      obj[headers[c]] = normalizeCell(row[c]);
+    }
+    rows.push(obj);
+  }
+
+  return rows;
+}
+
+function addEntry(table, row) {
+  if (!row.id) throw new Error("Missing id");
+  var sheet = getOrCreateSheet(table);
+  ensureHeaders(sheet, table);
+
+  var existing = findRowIndexById(sheet, row.id);
+  var clean = prepareRow(table, row, "saved");
+
+  if (existing > 0) {
+    writeRow(sheet, table, existing, clean);
+    return clean;
+  }
+
+  appendPreparedRow(sheet, table, clean);
+  return clean;
+}
+
+function updateEntry(table, row) {
+  if (!row.id) throw new Error("Missing id");
+  var sheet = getOrCreateSheet(table);
+  ensureHeaders(sheet, table);
+
+  var idx = findRowIndexById(sheet, row.id);
+  var clean = prepareRow(table, row, "saved");
+
+  if (idx > 0) {
+    writeRow(sheet, table, idx, clean);
+  } else {
+    appendPreparedRow(sheet, table, clean);
+  }
+
+  return clean;
+}
+
+function deleteEntry(table, id) {
+  if (!id) throw new Error("Missing id");
+  var sheet = getSpreadsheet().getSheetByName(table);
+  if (!sheet) return false;
+
+  var idx = findRowIndexById(sheet, id);
+  if (idx > 0) {
+    sheet.deleteRow(idx);
+    return true;
+  }
+
+  return false;
+}
+
+function prepareRow(table, row, status) {
+  var now = new Date().toISOString();
+  var clean = {};
+  var headers = SCHEMAS[table];
+
+  for (var i = 0; i < headers.length; i++) {
+    var h = headers[i];
+    clean[h] = valueOrBlank(row[h]);
+  }
+
+  clean.id = row.id;
+  clean.created_at = row.created_at || now;
+  clean.updated_at = row.updated_at || now;
+  clean.date = row.date || now.slice(0, 10);
+  clean.device_source = row.device_source || "";
+  clean.sync_status = status;
+
+  return clean;
+}
+
+function appendPreparedRow(sheet, table, row) {
+  var headers = getSheetHeaders(sheet);
+  var values = headers.map(function(h) {
+    if (String(h).toLowerCase() === "timestamp") return new Date();
+    return valueOrBlank(row[h]);
+  });
+  sheet.appendRow(values);
+}
+
+function writeRow(sheet, table, rowIndex, row) {
+  var headers = getSheetHeaders(sheet);
+  var values = headers.map(function(h) {
+    if (String(h).toLowerCase() === "timestamp") return valueOrBlank(row[h]) || new Date();
+    return valueOrBlank(row[h]);
+  });
+  sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+}
+
+function parsePostPayload(e) {
+  var raw = e && e.postData && e.postData.contents ? e.postData.contents : "";
+  var payload = {};
+
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch (err) {
+      payload = {};
+    }
+  }
+
+  if (!hasObjectKeys(payload) && e && e.parameter) {
+    if (e.parameter.payload) {
+      try {
+        payload = JSON.parse(e.parameter.payload);
+      } catch (err2) {
+        payload = {};
+      }
+    } else {
+      payload = {};
+      for (var k in e.parameter) payload[k] = e.parameter[k];
+    }
+  }
+
+  if (typeof payload.row === "string") {
+    try {
+      payload.row = JSON.parse(payload.row);
+    } catch (err3) {
+      payload.row = {};
+    }
+  }
+
+  if (typeof payload.data === "string") {
+    try {
+      payload.data = JSON.parse(payload.data);
+    } catch (err4) {}
+  }
+
+  return { payload: payload, raw: raw };
+}
+
+function extractPayloadRow(payload) {
+  if (payload.row && typeof payload.row === "object") return payload.row;
+  if (payload.data && typeof payload.data === "object") return payload.data;
+
+  var row = {};
+  for (var k in payload) {
+    if (k !== "action" && k !== "table" && k !== "callback") row[k] = payload[k];
+  }
+  return row;
+}
+
+function hasObjectKeys(obj) {
+  for (var k in obj) return true;
+  return false;
+}
+
+function getOrCreateSheet(table) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(table);
+  if (!sheet) sheet = ss.insertSheet(table);
+  return sheet;
+}
+
+function ensureDebugLog() {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(DEBUG_LOG_TAB);
+  if (!sheet) sheet = ss.insertSheet(DEBUG_LOG_TAB);
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["timestamp", "event", "action", "table", "row_id", "row_keys", "raw_preview"]);
+    sheet.setFrozenRows(1);
+  }
+}
+
+function logSyncDebug(event, action, table, row, raw) {
+  try {
+    ensureDebugLog();
+    var sheet = getSpreadsheet().getSheetByName(DEBUG_LOG_TAB);
+    var keys = row && typeof row === "object" ? Object.keys(row).join(",") : "";
+    var rowId = row && row.id ? row.id : "";
+    var preview = raw ? String(raw).slice(0, 900) : JSON.stringify(row).slice(0, 900);
+    sheet.appendRow([new Date(), event, action || "", table || "", rowId, keys, preview]);
+  } catch (err) {}
+}
+
+function getSpreadsheet() {
+  var id = String(SPREADSHEET_ID || "").trim();
+  if (id) return SpreadsheetApp.openById(id);
+  return SpreadsheetApp.getActive();
+}
+
+function getSheetHeaders(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return [];
+  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) {
+    return String(h);
+  });
+}
+
+function findRowIndexById(sheet, id) {
+  if (!sheet) return -1;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return -1;
+
+  var idCol = values[0].indexOf("id");
+  if (idCol === -1) return -1;
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][idCol]) === String(id)) return i + 1;
+  }
+
+  return -1;
+}
+
+function normalizeCell(cell) {
+  if (cell instanceof Date) return cell.toISOString();
+  return cell;
+}
+
+function valueOrBlank(value) {
+  return value === null || typeof value === "undefined" ? "" : value;
+}
+
+function jsonResponse(data, status) {
+  var payload = {};
+  for (var k in data) payload[k] = data[k];
+  payload.status = status || 200;
+
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function jsonpResponse(callback, data) {
+  var safeCallback = String(callback).replace(/[^\w.$]/g, "");
+  var payload = {};
+  for (var k in data) payload[k] = data[k];
+  payload.status = 200;
+
+  return ContentService
+    .createTextOutput(safeCallback + "(" + JSON.stringify(payload) + ");")
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
