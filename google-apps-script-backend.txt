@@ -1,4 +1,6 @@
-var SHEET_TABS = [
+var BACKEND_VERSION = "2026-04-27.workspace.v1";
+
+var LEGACY_SHEET_TABS = [
   "Food_Entries",
   "Food_Presets",
   "Workout_Entries",
@@ -11,6 +13,21 @@ var SHEET_TABS = [
   "Settings"
 ];
 
+var WORKSPACE_TABS = [
+  "Workspaces",
+  "Folders",
+  "Books",
+  "BookLabels",
+  "BookChapters",
+  "NoteSessions",
+  "NoteBlocks",
+  "Attachments",
+  "Tags",
+  "ItemTags",
+  "SyncLog"
+];
+
+var SHEET_TABS = LEGACY_SHEET_TABS.concat(WORKSPACE_TABS);
 var DEBUG_LOG_TAB = "Sync_Debug";
 
 // Optional but recommended:
@@ -29,60 +46,175 @@ var SCHEMAS = {
   Advice_Jar_Entries: ["id","created_at","updated_at","date","device_source","sync_status","pillar","text"],
   Journal_Entries: ["id","created_at","updated_at","date","device_source","sync_status","title","journal_type","entry_text","tags"],
   Projects: ["id","created_at","updated_at","date","device_source","sync_status","project_title","category","status","why_it_matters","next_step","notes","date_updated"],
-  Settings: ["id","created_at","updated_at","date","device_source","sync_status","key","value"]
+  Settings: ["id","created_at","updated_at","date","device_source","sync_status","key","value"],
+  Workspaces: ["id","created_at","updated_at","date","device_source","sync_status","workspace_key","name","workspace_type","status","folder_id","metadata_json"],
+  Folders: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","parent_folder_id","name","sort_order","metadata_json"],
+  Books: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","folder_id","title","author","status","start_read_date","finished_date","cover_attachment_id","compiled_notes","metadata_json"],
+  BookLabels: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","book_id","label_id","label_name","normalized_label"],
+  BookChapters: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","book_id","chapter_key","chapter_name","sort_order","status","metadata_json"],
+  NoteSessions: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","parent_type","parent_id","chapter_id","source_type","source_id","raw_input_type","raw_input_ref","ocr_text","cleaning_status","started_at","ended_at","metadata_json"],
+  NoteBlocks: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","session_id","parent_type","parent_id","chapter_id","block_order","block_type","format","content","structured_json","created_by","metadata_json"],
+  Attachments: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","session_id","parent_type","parent_id","chapter_id","attachment_type","filename","mime_type","byte_size","drive_file_id","drive_url","local_ref","ocr_status","metadata_json"],
+  Tags: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","label","normalized","color","metadata_json"],
+  ItemTags: ["id","created_at","updated_at","date","device_source","sync_status","workspace_id","tag_id","item_type","item_id"],
+  SyncLog: ["id","created_at","updated_at","date","device_source","sync_status","action","table","entity_id","result","message","request_json","response_json"]
 };
 
 function doGet(e) {
-  var params = e && e.parameter ? e.parameter : {};
-  var action = String(params.action || "getData").trim();
-  var callback = params.callback;
-  var data;
+  return safeExecute(function() {
+    var params = e && e.parameter ? e.parameter : {};
+    var action = String(params.action || "getData").trim();
+    var callback = params.callback;
+    var data;
 
-  if (action === "getData") {
-    data = { ok: true, tables: getData() };
-  } else if (action === "getSettings") {
-    data = { ok: true, settings: getRows("Settings") };
-  } else {
-    data = { ok: false, error: "Unknown action: " + action };
-  }
+    if (action === "getData") {
+      data = withVersion({ ok: true, tables: getData() });
+    } else if (action === "getSettings") {
+      data = withVersion({ ok: true, settings: getRows("Settings") });
+    } else if (action === "listWorkspaceData") {
+      data = withVersion({ ok: true, workspace: listWorkspaceData(params) });
+    } else {
+      data = withVersion({ ok: false, error: "Unknown action: " + action });
+    }
 
-  return callback ? jsonpResponse(callback, data) : jsonResponse(data, data.ok ? 200 : 400);
+    return callback ? jsonpResponse(callback, data) : jsonResponse(data, data.ok ? 200 : 400);
+  }, "get_error", e);
 }
 
 function doPost(e) {
-  try {
+  return safeExecute(function() {
     var parsed = parsePostPayload(e);
-    var payload = parsed.payload;
+    var payload = parsed.payload || {};
     var action = payload.action;
     var table = payload.table;
     var row = extractPayloadRow(payload);
 
-    if (SHEET_TABS.indexOf(table) === -1 && action !== "updateSettings") {
-      logSyncDebug("unknown_table", action, table, row, parsed.raw);
-      return jsonResponse({ ok: false, error: "Unknown table" }, 400);
-    }
+    if (action === "addEntry") return handleLegacyAddEntry(action, table, row, parsed.raw);
+    if (action === "updateEntry") return handleLegacyUpdateEntry(action, table, row, parsed.raw);
+    if (action === "deleteEntry") return handleLegacyDeleteEntry(action, table, row, parsed.raw);
+    if (action === "updateSettings") return jsonResponse(withVersion({ ok: true, row: updateEntry("Settings", row) }));
 
-    if (action === "addEntry") {
-      if (!row.id) logSyncDebug("missing_id_add", action, table, row, parsed.raw);
-      return jsonResponse({ ok: true, row: addEntry(table, row) });
-    }
-    if (action === "updateEntry") {
-      if (!row.id) logSyncDebug("missing_id_update", action, table, row, parsed.raw);
-      return jsonResponse({ ok: true, row: updateEntry(table, row) });
-    }
-    if (action === "deleteEntry") {
-      return jsonResponse({ ok: true, deleted: deleteEntry(table, row.id) });
-    }
-    if (action === "updateSettings") {
-      return jsonResponse({ ok: true, row: updateEntry("Settings", row) });
-    }
+    if (action === "createWorkspaceItem") return handleWorkspaceUpsert(action, payload, "create");
+    if (action === "updateWorkspaceItem") return handleWorkspaceUpsert(action, payload, "update");
+    if (action === "appendNoteBlock") return handleAppendNoteBlock(action, payload);
+    if (action === "saveNoteSession") return handleSaveNoteSession(action, payload);
+    if (action === "saveAttachmentMetadata") return handleSaveAttachmentMetadata(action, payload);
+    if (action === "listWorkspaceData") return jsonResponse(withVersion({ ok: true, workspace: listWorkspaceData(payload || {}) }));
+    if (action === "migrateLegacyJournalToReflection") return handleLegacyJournalMigration(action, payload);
 
     logSyncDebug("unknown_action", action, table, row, parsed.raw);
-    return jsonResponse({ ok: false, error: "Unknown action" }, 400);
+    return jsonResponse(withVersion({ ok: false, error: "Unknown action" }), 400);
+  }, "post_error", e);
+}
+
+function safeExecute(fn, eventName, eventObj) {
+  try {
+    setupSheets();
+    return fn();
   } catch (err) {
-    logSyncDebug("post_error", "", "", {}, e && e.postData ? e.postData.contents : String(err));
-    return jsonResponse({ ok: false, error: String(err) }, 500);
+    var raw = "";
+    try {
+      raw = eventObj && eventObj.postData ? eventObj.postData.contents : JSON.stringify(eventObj || {});
+    } catch (ignored) {}
+    logSyncDebug(eventName, "", "", {}, String(err) + " :: " + String(raw || ""));
+    return jsonResponse(withVersion({ ok: false, error: String(err) }), 500);
   }
+}
+
+function handleLegacyAddEntry(action, table, row, raw) {
+  if (LEGACY_SHEET_TABS.indexOf(table) === -1) {
+    logSyncDebug("unknown_table", action, table, row, raw);
+    return jsonResponse(withVersion({ ok: false, error: "Unknown table" }), 400);
+  }
+  if (!row.id) logSyncDebug("missing_id_add", action, table, row, raw);
+  return jsonResponse(withVersion({ ok: true, row: addEntry(table, row) }));
+}
+
+function handleLegacyUpdateEntry(action, table, row, raw) {
+  if (LEGACY_SHEET_TABS.indexOf(table) === -1) {
+    logSyncDebug("unknown_table", action, table, row, raw);
+    return jsonResponse(withVersion({ ok: false, error: "Unknown table" }), 400);
+  }
+  if (!row.id) logSyncDebug("missing_id_update", action, table, row, raw);
+  return jsonResponse(withVersion({ ok: true, row: updateEntry(table, row) }));
+}
+
+function handleLegacyDeleteEntry(action, table, row, raw) {
+  if (LEGACY_SHEET_TABS.indexOf(table) === -1) {
+    logSyncDebug("unknown_table", action, table, row, raw);
+    return jsonResponse(withVersion({ ok: false, error: "Unknown table" }), 400);
+  }
+  return jsonResponse(withVersion({ ok: true, deleted: deleteEntry(table, row.id) }));
+}
+
+function handleWorkspaceUpsert(action, payload, mode) {
+  var table = String(payload.table || "").trim();
+  var row = payload.row && typeof payload.row === "object" ? payload.row : extractPayloadRow(payload);
+  if (WORKSPACE_TABS.indexOf(table) === -1 || table === "SyncLog") {
+    return jsonResponse(withVersion({ ok: false, error: "Unknown workspace table" }), 400);
+  }
+
+  var result = mode === "create" ? addEntry(table, row) : updateEntry(table, row);
+  writeSyncLog({
+    action: action,
+    table: table,
+    entity_id: result.id,
+    result: "ok",
+    message: mode + " workspace item"
+  }, payload, result);
+
+  return jsonResponse(withVersion({ ok: true, table: table, row: result }));
+}
+
+function handleAppendNoteBlock(action, payload) {
+  var row = payload.row && typeof payload.row === "object" ? payload.row : extractPayloadRow(payload);
+  var inserted = addEntry("NoteBlocks", row);
+  writeSyncLog({
+    action: action,
+    table: "NoteBlocks",
+    entity_id: inserted.id,
+    result: "ok",
+    message: "note block appended"
+  }, payload, inserted);
+  return jsonResponse(withVersion({ ok: true, row: inserted }));
+}
+
+function handleSaveNoteSession(action, payload) {
+  var row = payload.row && typeof payload.row === "object" ? payload.row : extractPayloadRow(payload);
+  var inserted = updateEntry("NoteSessions", row);
+  writeSyncLog({
+    action: action,
+    table: "NoteSessions",
+    entity_id: inserted.id,
+    result: "ok",
+    message: "note session saved"
+  }, payload, inserted);
+  return jsonResponse(withVersion({ ok: true, row: inserted }));
+}
+
+function handleSaveAttachmentMetadata(action, payload) {
+  var row = payload.row && typeof payload.row === "object" ? payload.row : extractPayloadRow(payload);
+  var inserted = updateEntry("Attachments", row);
+  writeSyncLog({
+    action: action,
+    table: "Attachments",
+    entity_id: inserted.id,
+    result: "ok",
+    message: "attachment metadata saved"
+  }, payload, inserted);
+  return jsonResponse(withVersion({ ok: true, row: inserted }));
+}
+
+function handleLegacyJournalMigration(action, payload) {
+  var migrated = migrateLegacyJournalToReflection(payload || {});
+  writeSyncLog({
+    action: action,
+    table: "NoteBlocks",
+    entity_id: "batch",
+    result: "ok",
+    message: "legacy journal migrated count=" + migrated.count
+  }, payload, migrated);
+  return jsonResponse(withVersion({ ok: true, migration: migrated }));
 }
 
 function setupSheets() {
@@ -98,6 +230,8 @@ function setupSheets() {
 
 function ensureHeaders(sheet, table) {
   var headers = SCHEMAS[table];
+  if (!headers) return;
+
   var existingLastCol = Math.max(sheet.getLastColumn(), 1);
   var existing = sheet.getRange(1, 1, 1, existingLastCol).getValues()[0];
   var hasHeaders = existing.some(function(cell) { return cell !== ""; });
@@ -114,15 +248,28 @@ function ensureHeaders(sheet, table) {
   }
 
   sheet.setFrozenRows(1);
-  sheet.autoResizeColumns(1, sheet.getLastColumn());
+  if (sheet.getLastColumn() > 0) sheet.autoResizeColumns(1, sheet.getLastColumn());
 }
 
 function getData() {
-  setupSheets();
   var out = {};
-  for (var i = 0; i < SHEET_TABS.length; i++) {
-    var name = SHEET_TABS[i];
+  for (var i = 0; i < LEGACY_SHEET_TABS.length; i++) {
+    var name = LEGACY_SHEET_TABS[i];
     out[name] = getRows(name);
+  }
+  return out;
+}
+
+function listWorkspaceData(filter) {
+  var out = {};
+  var workspaceId = filter.workspace_id || null;
+  for (var i = 0; i < WORKSPACE_TABS.length; i++) {
+    var name = WORKSPACE_TABS[i];
+    var rows = getRows(name);
+    if (workspaceId && rows.length && rows[0].workspace_id !== undefined) {
+      rows = rows.filter(function(r) { return String(r.workspace_id || "") === String(workspaceId); });
+    }
+    out[name] = rows;
   }
   return out;
 }
@@ -153,37 +300,33 @@ function getRows(table) {
 }
 
 function addEntry(table, row) {
-  if (!row.id) throw new Error("Missing id");
+  var withMeta = prepareRow(table, row || {}, "saved");
   var sheet = getOrCreateSheet(table);
   ensureHeaders(sheet, table);
 
-  var existing = findRowIndexById(sheet, row.id);
-  var clean = prepareRow(table, row, "saved");
-
+  var existing = findRowIndexById(sheet, withMeta.id);
   if (existing > 0) {
-    writeRow(sheet, table, existing, clean);
-    return clean;
+    writeRow(sheet, table, existing, withMeta);
+    return withMeta;
   }
 
-  appendPreparedRow(sheet, table, clean);
-  return clean;
+  appendPreparedRow(sheet, table, withMeta);
+  return withMeta;
 }
 
 function updateEntry(table, row) {
-  if (!row.id) throw new Error("Missing id");
+  var withMeta = prepareRow(table, row || {}, "saved");
   var sheet = getOrCreateSheet(table);
   ensureHeaders(sheet, table);
 
-  var idx = findRowIndexById(sheet, row.id);
-  var clean = prepareRow(table, row, "saved");
-
+  var idx = findRowIndexById(sheet, withMeta.id);
   if (idx > 0) {
-    writeRow(sheet, table, idx, clean);
+    writeRow(sheet, table, idx, withMeta);
   } else {
-    appendPreparedRow(sheet, table, clean);
+    appendPreparedRow(sheet, table, withMeta);
   }
 
-  return clean;
+  return withMeta;
 }
 
 function deleteEntry(table, id) {
@@ -201,21 +344,22 @@ function deleteEntry(table, id) {
 }
 
 function prepareRow(table, row, status) {
+  var headers = SCHEMAS[table];
+  if (!headers) throw new Error("Unknown schema for table: " + table);
+
   var now = new Date().toISOString();
   var clean = {};
-  var headers = SCHEMAS[table];
-
   for (var i = 0; i < headers.length; i++) {
     var h = headers[i];
     clean[h] = valueOrBlank(row[h]);
   }
 
-  clean.id = row.id;
+  clean.id = row.id || buildStableId(table);
   clean.created_at = row.created_at || now;
-  clean.updated_at = row.updated_at || now;
+  clean.updated_at = now;
   clean.date = row.date || now.slice(0, 10);
-  clean.device_source = row.device_source || "";
-  clean.sync_status = status;
+  clean.device_source = row.device_source || "apps_script";
+  clean.sync_status = status || row.sync_status || "saved";
 
   return clean;
 }
@@ -324,6 +468,95 @@ function logSyncDebug(event, action, table, row, raw) {
   } catch (err) {}
 }
 
+function writeSyncLog(entry, requestPayload, responsePayload) {
+  try {
+    var row = {
+      id: buildStableId("SyncLog"),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      date: todayISO(),
+      device_source: "apps_script",
+      sync_status: "saved",
+      action: entry.action || "",
+      table: entry.table || "",
+      entity_id: entry.entity_id || "",
+      result: entry.result || "ok",
+      message: entry.message || "",
+      request_json: safeJSONStringify(requestPayload || {}),
+      response_json: safeJSONStringify(responsePayload || {})
+    };
+    addEntry("SyncLog", row);
+  } catch (err) {
+    logSyncDebug("sync_log_error", "writeSyncLog", "SyncLog", {}, String(err));
+  }
+}
+
+function migrateLegacyJournalToReflection(opts) {
+  var journals = getRows("Journal_Entries");
+  var existing = getRows("NoteBlocks");
+  var migratedMap = {};
+  for (var i = 0; i < existing.length; i++) {
+    var legacyId = String(existing[i].legacy_journal_id || existing[i].parent_id || "").trim();
+    if (legacyId) migratedMap[legacyId] = true;
+  }
+
+  var reflectionWorkspaceId = String(opts.workspace_id || "").trim();
+  if (!reflectionWorkspaceId) {
+    reflectionWorkspaceId = ensureReflectionWorkspaceId();
+  }
+
+  var created = 0;
+  for (var j = 0; j < journals.length; j++) {
+    var item = journals[j];
+    if (!item.id || migratedMap[String(item.id)]) continue;
+
+    addEntry("NoteBlocks", {
+      id: buildStableId("NoteBlocks"),
+      workspace_id: reflectionWorkspaceId,
+      session_id: "",
+      parent_type: "legacy_journal",
+      parent_id: item.id,
+      chapter_id: "",
+      block_order: 1,
+      block_type: "reflection",
+      format: "plain_text",
+      content: item.entry_text || "",
+      structured_json: "",
+      created_by: "legacy_migration",
+      metadata_json: safeJSONStringify({
+        legacy_journal_id: item.id,
+        legacy_title: item.title || item.journal_type || "Reflection",
+        legacy_tags: item.tags || "",
+        migrated_at: new Date().toISOString()
+      })
+    });
+    created++;
+  }
+
+  return {
+    migrated_at: new Date().toISOString(),
+    reflection_workspace_id: reflectionWorkspaceId,
+    count: created
+  };
+}
+
+function ensureReflectionWorkspaceId() {
+  var rows = getRows("Workspaces");
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].workspace_key || "").toLowerCase() === "reflection") {
+      return rows[i].id;
+    }
+  }
+  var created = addEntry("Workspaces", {
+    workspace_key: "reflection",
+    name: "Reflection",
+    workspace_type: "reflection",
+    status: "active",
+    metadata_json: safeJSONStringify({ source: "migration_auto_create" })
+  });
+  return created.id;
+}
+
 function getSpreadsheet() {
   var id = String(SPREADSHEET_ID || "").trim();
   if (id) return SpreadsheetApp.openById(id);
@@ -362,10 +595,32 @@ function valueOrBlank(value) {
   return value === null || typeof value === "undefined" ? "" : value;
 }
 
-function jsonResponse(data, status) {
+function buildStableId(prefix) {
+  return String(prefix || "id") + "_" + new Date().getTime().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function safeJSONStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    return "{}";
+  }
+}
+
+function withVersion(data) {
   var payload = {};
   for (var k in data) payload[k] = data[k];
-  payload.status = status || 200;
+  payload.version = BACKEND_VERSION;
+  return payload;
+}
+
+function jsonResponse(data, status) {
+  var payload = withVersion(data || {});
+  payload.status = status || payload.status || 200;
 
   return ContentService
     .createTextOutput(JSON.stringify(payload))
@@ -374,11 +629,29 @@ function jsonResponse(data, status) {
 
 function jsonpResponse(callback, data) {
   var safeCallback = String(callback).replace(/[^\w.$]/g, "");
-  var payload = {};
-  for (var k in data) payload[k] = data[k];
-  payload.status = 200;
+  var payload = withVersion(data || {});
+  payload.status = payload.status || 200;
 
   return ContentService
     .createTextOutput(safeCallback + "(" + JSON.stringify(payload) + ");")
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+/*
+ * AI pipeline placeholders (no paid model calls here).
+ *
+ * TODO(ai-ingestion): Accept handwritten image metadata and/or OCR text payload.
+ * TODO(ai-ingestion): Fetch secure AI provider key from PropertiesService, never from client.
+ * TODO(ai-ingestion): Send content to future vision/text model through secure server-side call.
+ * TODO(ai-ingestion): Validate model JSON output schema (required ids, chapter links, note blocks).
+ * TODO(ai-ingestion): Append cleaned note blocks to NoteBlocks and link to Workspaces/Books/Chapters.
+ * TODO(ai-ingestion): Persist provenance in NoteSessions + Attachments + SyncLog.
+ */
+function ingestHandwrittenInputPlaceholder(payload) {
+  return {
+    ok: false,
+    version: BACKEND_VERSION,
+    message: "AI ingestion placeholder only. Implement secure server-side model call before enabling.",
+    received_keys: payload ? Object.keys(payload) : []
+  };
 }
