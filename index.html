@@ -1737,6 +1737,77 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   border: 1px solid var(--border);
   background: var(--surface);
 }
+.books-shell { display: grid; gap: 14px; }
+.books-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.books-toolbar select, .books-toolbar input {
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 0 10px;
+}
+.books-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.book-card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.book-cover {
+  height: 118px;
+  border-radius: 14px;
+  border: 1px dashed color-mix(in oklab, var(--accent) 40%, var(--border));
+  background: linear-gradient(135deg, var(--accent-glow), transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.book-meta-title { font-weight: 700; font-size: 15px; }
+.book-meta-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.book-labels { display: flex; flex-wrap: wrap; gap: 6px; }
+.book-label-chip {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.book-detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+.book-doc {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-height: 220px;
+  padding: 12px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+}
+.book-doc .doc-line-heading {
+  font-weight: 700;
+  font-size: 1.06rem;
+  margin: 8px 0 4px;
+}
+.book-doc .doc-line-text {
+  font-size: .95rem;
+  line-height: 1.45;
+}
 @media (min-width: 768px) {
   .workspace-card { flex-basis: calc((100% - 30px) / 4); max-width: calc((100% - 30px) / 4); }
 }
@@ -2265,6 +2336,12 @@ const WORKSPACE_KIND_LABELS = {
 
 const WORKSPACE_TYPE_FIELDS = {
   books: () => ({
+    books: [],
+    labels: [],
+    sort: "recently_edited",
+    filter_label: "all",
+    selected_book_id: null,
+    // Legacy compatibility fields retained for older app snapshots.
     book_title: "",
     cover_image_metadata: null,
     start_read_date: null,
@@ -2273,7 +2350,9 @@ const WORKSPACE_TYPE_FIELDS = {
     chapters: [],
     compiled_notes: [],
     raw_handwritten_sessions: [],
-    manual_text_notes: []
+    manual_text_notes: [],
+    // TODO(books-sync): push books + label payload to backend workspace sync endpoint.
+    // TODO(books-cover-upload): connect cover_image_metadata to Drive upload metadata once enabled.
   }),
   reflection: () => ({
     dated_entries: [],
@@ -3676,9 +3755,287 @@ function createSampleWorkspaceItem(kind) {
   return { ws, folder, source, session };
 }
 
+function booksWorkspaceRecord() {
+  return ensureWorkspaceForKind("books");
+}
+
+function ensureBooksPayload() {
+  const ws = booksWorkspaceRecord();
+  const payload = ws.payload || {};
+  let changed = false;
+  if (!Array.isArray(payload.books)) { payload.books = []; changed = true; }
+  if (!Array.isArray(payload.labels)) { payload.labels = []; changed = true; }
+  if (!payload.sort) { payload.sort = "recently_edited"; changed = true; }
+  if (!payload.filter_label) { payload.filter_label = "all"; changed = true; }
+  if (!("selected_book_id" in payload)) { payload.selected_book_id = null; changed = true; }
+  if (!payload.books.length && payload.book_title) {
+    changed = true;
+    payload.books.push({
+      id: uid(),
+      created_at: nowISO(),
+      updated_at: nowISO(),
+      title: payload.book_title || "Untitled Book",
+      author: payload.author || "",
+      cover_image_metadata: payload.cover_image_metadata || { placeholder: true, local_placeholder: "book-gradient-v1" },
+      start_read_date: payload.start_read_date || null,
+      finished_date: payload.finished_date || null,
+      label_ids: [],
+      chapters: Array.isArray(payload.chapters) ? payload.chapters : [],
+      compiled_notes: Array.isArray(payload.compiled_notes) ? payload.compiled_notes.join("\n") : String(payload.compiled_notes || ""),
+      manual_text_notes: Array.isArray(payload.manual_text_notes) ? payload.manual_text_notes : []
+    });
+  }
+  ws.payload = payload;
+  if (changed) updateWorkspaceEntity("workspaces", ws.id, { payload });
+  return { ws, payload };
+}
+
+function persistBooksPayload(payloadPatch = {}) {
+  const ws = booksWorkspaceRecord();
+  const payload = Object.assign({}, ws.payload || {}, payloadPatch);
+  updateWorkspaceEntity("workspaces", ws.id, { payload });
+  return payload;
+}
+
+function booksSortedFiltered(payload) {
+  const books = (payload.books || []).slice();
+  const labels = payload.labels || [];
+  const labelName = id => labels.find(l => l.id === id)?.name || "";
+  let list = books;
+  if (payload.filter_label && payload.filter_label !== "all") {
+    list = list.filter(b => (b.label_ids || []).includes(payload.filter_label));
+  }
+  const sort = payload.sort || "recently_edited";
+  list.sort((a, b) => {
+    if (sort === "title") return String(a.title || "").localeCompare(String(b.title || ""));
+    if (sort === "start_date") return String(b.start_read_date || "").localeCompare(String(a.start_read_date || ""));
+    if (sort === "finished_date") return String(b.finished_date || "").localeCompare(String(a.finished_date || ""));
+    if (sort === "label") return labelName(a.label_ids?.[0]).localeCompare(labelName(b.label_ids?.[0]));
+    return String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""));
+  });
+  return list;
+}
+
+function newBookTemplate() {
+  return {
+    id: uid(),
+    created_at: nowISO(),
+    updated_at: nowISO(),
+    title: "Untitled Book",
+    author: "",
+    cover_image_metadata: {
+      placeholder: true,
+      local_placeholder: "book-gradient-v1"
+      // TODO(books-cover-upload): replace placeholder with uploaded Drive file metadata.
+    },
+    start_read_date: todayISO(),
+    finished_date: null,
+    label_ids: [],
+    chapters: [],
+    compiled_notes: "## Chapter 1\n",
+    manual_text_notes: []
+  };
+}
+
+function booksDocHTML(text) {
+  const lines = String(text || "").split("\n");
+  return lines.map(line => {
+    if (line.trim().startsWith("##")) {
+      return `<div class="doc-line-heading">${escapeHTML(line.replace(/^##\s*/, "") || "Chapter")}</div>`;
+    }
+    return `<div class="doc-line-text">${escapeHTML(line || " ")}</div>`;
+  }).join("");
+}
+
+function renderBooksWorkspacePage(root) {
+  const { payload } = ensureBooksPayload();
+  const books = booksSortedFiltered(payload);
+  const labels = payload.labels || [];
+  const selected = (payload.books || []).find(b => b.id === payload.selected_book_id) || null;
+
+  root.innerHTML = `
+    <div class="workspace-page books-shell">
+      <button class="workspace-back" id="workspace-back">← Back to dashboard</button>
+      <div class="card">
+        <div class="section-title" style="margin:0 0 8px"><h4>Books</h4></div>
+        <h2>Book Library</h2>
+        <p class="muted">Create books, organize labels, track chapter progress, and keep editable compiled notes in local storage.</p>
+        <div class="books-toolbar" style="margin-top:10px">
+          <button class="btn btn-primary btn-sm" id="books-new">+ New Book</button>
+          <select id="books-sort">
+            <option value="recently_edited">Sort: Recently edited</option>
+            <option value="title">Sort: Title</option>
+            <option value="start_date">Sort: Start date</option>
+            <option value="finished_date">Sort: Finished date</option>
+            <option value="label">Sort: Label</option>
+          </select>
+          <select id="books-filter-label">
+            <option value="all">All labels</option>
+            ${labels.map(l => `<option value="${l.id}">${escapeHTML(l.name)}</option>`).join("")}
+          </select>
+          <button class="btn btn-ghost btn-sm" id="books-add-label">+ Label</button>
+        </div>
+      </div>
+
+      ${selected ? `
+        <div class="book-detail" id="book-detail">
+          <div class="book-cover">Cover Placeholder</div>
+          <div>
+            <div class="book-meta-title">${escapeHTML(selected.title || "Untitled Book")}</div>
+            <div class="book-meta-sub">${selected.author ? "by " + escapeHTML(selected.author) : "No author set"}</div>
+            <div class="book-meta-sub">Started: ${fmtDate(selected.start_read_date)} · Finished: ${fmtDate(selected.finished_date)}</div>
+          </div>
+          <div class="book-labels">
+            ${(selected.label_ids || []).map(id => `<span class="book-label-chip">${escapeHTML(labels.find(l => l.id === id)?.name || "Label")}</span>`).join("") || `<span class="muted">No labels yet</span>`}
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:6px">Chapters</div>
+            <div class="list">
+              ${(selected.chapters || []).length ? selected.chapters.map(ch => `<div class="list-row"><div class="grow">${escapeHTML(ch.title || "Untitled chapter")}</div></div>`).join("") : `<div class="empty">No chapters yet.</div>`}
+            </div>
+          </div>
+          <div>
+            <div class="section-title" style="margin:0 0 8px"><h4>Compiled Notes</h4></div>
+            <div class="book-doc">${booksDocHTML(selected.compiled_notes)}</div>
+          </div>
+          <div class="sheet-actions">
+            <button class="btn btn-sm" id="book-add-note">Add Note</button>
+            <button class="btn btn-sm" id="book-add-chapter">Add Chapter</button>
+            <button class="btn btn-sm" id="book-manage-labels">Labels</button>
+            <button class="btn btn-sm" id="book-edit-text">Edit Text</button>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" id="book-close-detail">Close</button>
+          </div>
+        </div>
+      ` : ""}
+
+      <div class="books-grid">
+        ${books.length ? books.map(book => `
+          <button class="book-card" data-book-open="${book.id}">
+            <div class="book-cover">${book.cover_image_metadata?.placeholder ? "Cover Placeholder" : "Cover"}</div>
+            <div>
+              <div class="book-meta-title">${escapeHTML(book.title || "Untitled Book")}</div>
+              <div class="book-meta-sub">${book.author ? escapeHTML(book.author) : "No author"}</div>
+            </div>
+            <div class="book-meta-sub">Start ${fmtDate(book.start_read_date)} · Finish ${fmtDate(book.finished_date)}</div>
+            <div class="book-labels">
+              ${(book.label_ids || []).slice(0, 3).map(id => `<span class="book-label-chip">${escapeHTML(labels.find(l => l.id === id)?.name || "Label")}</span>`).join("") || `<span class="book-meta-sub">No labels</span>`}
+            </div>
+          </button>
+        `).join("") : `<div class="workspace-placeholder"><strong>No books yet.</strong><div class="muted" style="margin-top:4px">Create your first book to start tracking chapters and compiled notes.</div></div>`}
+      </div>
+    </div>
+  `;
+
+  root.querySelector("#workspace-back").addEventListener("click", closeWorkspace);
+  root.querySelector("#books-new").addEventListener("click", () => {
+    const title = prompt("Book title?");
+    if (!title) return;
+    const author = prompt("Author (optional):") || "";
+    const created = newBookTemplate();
+    created.title = title.trim();
+    created.author = author.trim();
+    const nextBooks = [created, ...(payload.books || [])];
+    persistBooksPayload({ ...payload, books: nextBooks, selected_book_id: created.id });
+    toast("Book created");
+    renderActive();
+  });
+  const sortSel = root.querySelector("#books-sort");
+  sortSel.value = payload.sort || "recently_edited";
+  sortSel.addEventListener("change", () => { persistBooksPayload({ ...payload, sort: sortSel.value }); renderActive(); });
+  const filterSel = root.querySelector("#books-filter-label");
+  filterSel.value = payload.filter_label || "all";
+  filterSel.addEventListener("change", () => { persistBooksPayload({ ...payload, filter_label: filterSel.value }); renderActive(); });
+
+  root.querySelector("#books-add-label").addEventListener("click", () => {
+    const name = (prompt("New label name?") || "").trim();
+    if (!name) return;
+    if ((payload.labels || []).some(l => l.name.toLowerCase() === name.toLowerCase())) return toast("Label already exists");
+    const newLabel = { id: uid(), name, created_at: nowISO() };
+    persistBooksPayload({ ...payload, labels: [...(payload.labels || []), newLabel] });
+    createWorkspaceTag(name, booksWorkspaceRecord().id);
+    toast("Label added");
+    renderActive();
+  });
+
+  root.querySelectorAll("[data-book-open]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      persistBooksPayload({ ...payload, selected_book_id: btn.dataset.bookOpen });
+      renderActive();
+    });
+  });
+
+  if (!selected) return;
+  root.querySelector("#book-close-detail").addEventListener("click", () => {
+    persistBooksPayload({ ...payload, selected_book_id: null });
+    renderActive();
+  });
+  root.querySelector("#book-add-chapter").addEventListener("click", () => {
+    const title = (prompt("Chapter title?") || "").trim();
+    if (!title) return;
+    const next = (payload.books || []).map(b => b.id === selected.id ? {
+      ...b,
+      chapters: [...(b.chapters || []), { id: uid(), title, created_at: nowISO() }],
+      compiled_notes: `${b.compiled_notes || ""}\n## ${title}\n`,
+      updated_at: nowISO()
+    } : b);
+    persistBooksPayload({ ...payload, books: next });
+    toast("Chapter added");
+    renderActive();
+  });
+  root.querySelector("#book-add-note").addEventListener("click", () => {
+    const note = prompt("Add text note:");
+    if (!note) return;
+    const next = (payload.books || []).map(b => b.id === selected.id ? {
+      ...b,
+      manual_text_notes: [...(b.manual_text_notes || []), { id: uid(), text: note, created_at: nowISO() }],
+      compiled_notes: `${b.compiled_notes || ""}\n${note}\n`,
+      updated_at: nowISO()
+    } : b);
+    persistBooksPayload({ ...payload, books: next });
+    toast("Note added");
+    renderActive();
+  });
+  root.querySelector("#book-manage-labels").addEventListener("click", () => {
+    if (!(payload.labels || []).length) return toast("Create labels first");
+    const hint = (payload.labels || []).map((l, i) => `${i + 1}. ${l.name}`).join("\n");
+    const chosen = prompt(`Choose labels by number (comma-separated):\n${hint}`);
+    if (!chosen) return;
+    const indexes = chosen.split(",").map(x => Number(x.trim()) - 1).filter(n => n >= 0);
+    const selectedIds = [...new Set(indexes.map(i => payload.labels[i]?.id).filter(Boolean))];
+    const next = (payload.books || []).map(b => b.id === selected.id ? { ...b, label_ids: selectedIds, updated_at: nowISO() } : b);
+    persistBooksPayload({ ...payload, books: next });
+    toast("Labels updated");
+    renderActive();
+  });
+  root.querySelector("#book-edit-text").addEventListener("click", () => {
+    const labelMarkup = `
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Use lines starting with <strong>##</strong> to create larger chapter headings.</div>
+      <textarea id="book-notes-editor" style="width:100%;min-height:260px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:12px">${escapeHTML(selected.compiled_notes || "")}</textarea>
+      <div class="sheet-actions" style="margin-top:10px">
+        <button class="btn btn-ghost" id="book-editor-cancel">Cancel</button>
+        <span class="spacer"></span>
+        <button class="btn btn-primary" id="book-editor-save">Save Text</button>
+      </div>
+    `;
+    openSheet(`<h2>Edit Text</h2>${labelMarkup}`, () => {
+      document.getElementById("book-editor-cancel").addEventListener("click", closeSheet);
+      document.getElementById("book-editor-save").addEventListener("click", () => {
+        const value = document.getElementById("book-notes-editor").value || "";
+        const next = (payload.books || []).map(b => b.id === selected.id ? { ...b, compiled_notes: value, updated_at: nowISO() } : b);
+        persistBooksPayload({ ...payload, books: next });
+        closeSheet();
+        toast("Book text saved locally");
+        renderActive();
+      });
+    });
+  });
+}
+
 function renderWorkspacePage(root, key) {
   const workspace = WORKSPACES.find(w => w.key === key);
   if (!workspace) return closeWorkspace();
+  if (key === "books") return renderBooksWorkspacePage(root);
   root.innerHTML = `
     <div class="workspace-page">
       <button class="workspace-back" id="workspace-back">← Back to dashboard</button>
