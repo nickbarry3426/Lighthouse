@@ -1481,51 +1481,11 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   min-height: 86px;
   scroll-snap-align: start;
 }
-.quick-btn.win-btn {
-  background: linear-gradient(180deg, color-mix(in oklab, var(--green-500) 20%, var(--surface-2)), var(--surface-2));
-  border-color: color-mix(in oklab, var(--green-500) 38%, var(--border));
-}
-.quick-btn.loss-btn {
-  background: linear-gradient(180deg, color-mix(in oklab, var(--red-500) 18%, var(--surface-2)), var(--surface-2));
-  border-color: color-mix(in oklab, var(--red-500) 38%, var(--border));
-}
 .quick-btn.more-btn {
   background: linear-gradient(180deg, var(--surface), var(--surface-2));
   border-style: dashed;
 }
 .quick-btn.more-btn svg { stroke: var(--text-soft); }
-
-.dashboard-journal-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 14px;
-  padding: 20px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(160deg, var(--surface-2), var(--surface));
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-}
-.dashboard-journal-card h3 {
-  font-size: 20px;
-  margin-bottom: 4px;
-}
-.dashboard-journal-card p {
-  color: var(--muted);
-  font-size: 14px;
-}
-.dashboard-journal-card .entry-button {
-  flex: 0 0 auto;
-  min-width: 78px;
-  min-height: 58px;
-  border-radius: 18px;
-  color: #f1ede2;
-  background: linear-gradient(180deg, var(--navy-600), var(--navy-800));
-  box-shadow: 0 14px 34px rgba(14,24,40,0.22);
-  border: 1px solid rgba(255,255,255,0.10);
-  font-weight: 700;
-}
 
 /* ---- Inline reflection composer ---- */
 .composer {
@@ -1655,21 +1615,130 @@ canvas.spark { display: block; width: 100%; height: 100%; }
 .memory-card .memory-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 /* ---- Pillars: more compact + horizontal scroll ---- */
-.pillars-strip {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  padding: 2px 1px 4px;
-  margin: 0 -2px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+.pillars-ring-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
-.pillars-strip::-webkit-scrollbar { display: none; }
-.pillars-strip .pillar-card {
-  flex-shrink: 0;
-  width: 130px;
+.pillar-ring-card {
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: linear-gradient(150deg, var(--surface-2), var(--surface));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pillar-ring-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pillar-ring-head .name { font-size: 13px; font-weight: 600; }
+.pillar-ring-head .score { font-size: 12px; color: var(--muted); }
+.pillar-ring-viz {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  margin: 2px auto 0;
+  position: relative;
+  background:
+    conic-gradient(var(--ring-color, var(--accent)) calc(var(--ring-pct, 0) * 1%), color-mix(in oklab, var(--border) 72%, transparent) 0);
+}
+.pillar-ring-viz::before {
+  content: "";
+  position: absolute;
+  inset: 11px;
+  border-radius: 50%;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.pillar-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  z-index: 1;
+}
+.pillar-ring-center.positive { color: var(--green-500); }
+.pillar-ring-center.neutral { color: var(--muted); }
+.pillar-ring-center.negative { color: var(--red-500); }
+.pillar-ring-meta {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.workspaces-section {
+  margin-top: 14px;
+}
+.workspace-scroll {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.workspace-card {
+  flex: 0 0 min(40vw, 180px);
+  min-height: 120px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: left;
   scroll-snap-align: start;
+}
+.workspace-card .icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+.workspace-card .icon-wrap svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.workspace-card .label { font-size: 14px; font-weight: 600; color: var(--text); }
+.workspace-card .meta { font-size: 12px; color: var(--muted); }
+.workspace-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.workspace-back {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--text-soft);
+}
+.workspace-placeholder {
+  padding: 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+@media (min-width: 768px) {
+  .workspace-card { flex-basis: calc((100% - 30px) / 4); max-width: calc((100% - 30px) / 4); }
 }
 
 /* ---- Workout v2: weekly strip + balance bars ---- */
@@ -2165,6 +2234,14 @@ const PILLARS = [
   { key: "connection",   name: "Human Connection", blurb: "Real contact." },
   { key: "contribution", name: "World Contribution", blurb: "Work that matters." }
 ];
+const WORKSPACES = [
+  { key: "books", label: "Books", icon: "book" },
+  { key: "reflection", label: "Reflection", icon: "reflection" },
+  { key: "learning", label: "Learning", icon: "learning" },
+  { key: "projects", label: "Projects", icon: "projects" },
+  { key: "work", label: "Work", icon: "work" },
+  { key: "general", label: "General", icon: "general" }
+];
 
 const WORKOUT_CATEGORIES = [
   "Chest","Bicep","Tricep","Back","Quads","Hamstrings","Calves","Glutes","Running","Stretching","Abs"
@@ -2222,6 +2299,8 @@ const state = {
   }),
   syncStatus: "idle", // idle | syncing | error | local
   online: navigator.onLine,
+  todayView: "dashboard", // dashboard | workspace
+  activeWorkspace: null,
   bodySub: "food",
   reflectSub: "pillars",
   jarFilter: { type: "all", category: "all", view: "jars" },
@@ -3125,6 +3204,20 @@ function greetingTitle() {
   return "Quiet hours";
 }
 
+function workspaceIcon(kind) {
+  const icons = {
+    newnote: `<svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M8 5h8"/><path d="M8 9h8"/><path d="M12 13v6"/><path d="M9 16h6"/></svg>`,
+    library: `<svg viewBox="0 0 24 24"><path d="M5 4h4v16H5z"/><path d="M10 4h4v16h-4z"/><path d="M15 4h4v16h-4z"/><path d="M4 20h16"/></svg>`,
+    book: `<svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h11a3 3 0 0 1 3 3v13H8a4 4 0 0 0-4 4z"/><path d="M8 7h8"/></svg>`,
+    reflection: `<svg viewBox="0 0 24 24"><path d="M12 3l9 4v6c0 5-3.8 9.2-9 10-5.2-.8-9-5-9-10V7l9-4z"/><path d="M9 12l2 2 4-4"/></svg>`,
+    learning: `<svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M7 10v4c0 2.2 2.2 4 5 4s5-1.8 5-4v-4"/></svg>`,
+    projects: `<svg viewBox="0 0 24 24"><path d="M3 7h18"/><path d="M6 7V5h12v2"/><rect x="4" y="7" width="16" height="13" rx="2"/></svg>`,
+    work: `<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M9 6V4h6v2"/><path d="M3 12h18"/></svg>`,
+    general: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`
+  };
+  return icons[kind] || icons.general;
+}
+
 document.querySelectorAll(".tab-btn").forEach(b => {
   b.addEventListener("click", () => switchTab(b.dataset.tab));
 });
@@ -3180,6 +3273,9 @@ function bootApp() {
    Tab renderers — placeholders to be filled in
    ---------------------------------------------------------- */
 function renderToday(root) {
+  if (state.todayView === "workspace" && state.activeWorkspace) {
+    return renderWorkspacePage(root, state.activeWorkspace);
+  }
   const food = todaysFood();
   const cals = sumBy(food, "calories");
   const protein = sumBy(food, "protein");
@@ -3190,11 +3286,8 @@ function renderToday(root) {
   const weekMinutes = sumBy(currentWeekWorkouts(), "duration");
 
   const advice = pickDailyAdvice();
-  const recentJar = (state.data.Jar_Entries || []).slice().sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""))[0];
-  const todayPillar = pillarOfTheDay();
 
   root.innerHTML = `
-    <!-- HERO ANCHOR — single calm focal point -->
     <div class="hero-anchor">
       <div class="eyebrow">${greetingEyebrow()} · ${new Date().toLocaleDateString(undefined,{weekday:"long"})}</div>
       <h1>${greetingTitle()}<span class="accent">.</span></h1>
@@ -3217,74 +3310,111 @@ function renderToday(root) {
       `}
     </div>
 
-    ${bodySnapshotHTML({ calories: cals, protein, motionMinutes: wMin, weeklyMinutes: weekMinutes, motionGoal })}
-
-    <!-- QUICK ADD — 3 most-used + More -->
+    <div class="section-title"><h4>Quick Health Actions</h4></div>
     <div class="quick-grid q4">
       <button class="quick-btn" data-quick="food"><svg viewBox="0 0 24 24"><path d="M7 3v8M11 3v8M7 7h4M9 11v10"/><path d="M17 3v18"/><path d="M15 3c3 2 4 5 2 8"/></svg>Food</button>
       <button class="quick-btn" data-quick="workout"><svg viewBox="0 0 24 24"><path d="M6 8v8M18 8v8M3 11h3M18 11h3M6 11h12"/></svg>Workout</button>
       <button class="quick-btn" data-quick="weight"><svg viewBox="0 0 24 24"><path d="M4 8h16l-1.5 11a2 2 0 0 1-2 1.8H7.5a2 2 0 0 1-2-1.8L4 8z"/><path d="M9 8a3 3 0 1 1 6 0"/></svg>Weight</button>
-      <button class="quick-btn win-btn" data-quick="win"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M5 4h14v5a7 7 0 0 1-14 0V4z"/></svg>Win</button>
-      <button class="quick-btn loss-btn" data-quick="failure"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 8l8 8M16 8l-8 8"/></svg>Loss</button>
-      <button class="quick-btn" data-quick="journal"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>Journal</button>
-      <button class="quick-btn" data-quick="newnote"><svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M8 5h8"/><path d="M8 9h8"/><path d="M12 13v6"/><path d="M9 16h6"/></svg>New Note</button>
+      <button class="quick-btn" data-quick="checkin"><svg viewBox="0 0 24 24"><path d="M12 3l9 4v6c0 5-3.8 9.2-9 10-5.2-.8-9-5-9-10V7l9-4z"/><path d="M9 12l2 2 4-4"/></svg>Check In</button>
+      <button class="quick-btn" data-quick="journal"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>Reflection</button>
       <button class="quick-btn more-btn" data-quick="more"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/></svg>More</button>
     </div>
 
-    <div class="dashboard-journal-card">
-      <div>
-        <h3>Reflection journal</h3>
-        <p>Prayer, gratitude, stories, rants, goals, and decisions.</p>
-      </div>
-      <button class="entry-button" data-journal-entry>Entry</button>
-    </div>
+    ${bodySnapshotHTML({ calories: cals, protein, motionMinutes: wMin, weeklyMinutes: weekMinutes, motionGoal })}
 
-    <!-- PILLARS — compact horizontal strip, not a 2x3 grid -->
     <div class="section-title"><h4>Pillars · 7-day</h4>
       <button class="small-link" data-go-reflect="pillars">All</button>
     </div>
-    <div class="pillars-strip">
-      ${PILLARS.map(p => pillarCardHTML(p)).join("")}
+    <div class="pillars-ring-grid">
+      ${PILLARS.map(p => pillarRingCardHTML(p)).join("")}
     </div>
 
-    <!-- MEMORY CARD — slim, not a "section" -->
-    ${recentJar ? `
-      <div class="memory-card ${recentJar.type === 'L' ? 'l' : ''}" data-go-jar>
-        <div class="memory-mark">
-          ${recentJar.type === 'W'
-            ? `<svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M5 4h14v5a7 7 0 0 1-14 0V4z"/></svg>`
-            : `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 8l8 8M16 8l-8 8"/></svg>`}
-        </div>
-        <div class="memory-body">
-          <div class="memory-title">${escapeHTML(recentJar.title || "Untitled")}</div>
-          <div class="memory-meta">${recentJar.type === 'W' ? 'Win' : 'Failure'} · ${fmtRelDay(recentJar.date)}</div>
-        </div>
+    <div class="workspaces-section">
+      <div class="section-title"><h4>Notes and Workspaces</h4></div>
+      <div class="workspace-scroll">
+        <button class="workspace-card" data-note-action="new">
+          <span class="icon-wrap">${workspaceIcon("newnote")}</span>
+          <div>
+            <div class="label">New Note</div>
+            <div class="meta">Capture handwriting</div>
+          </div>
+        </button>
+        <button class="workspace-card" data-note-action="library">
+          <span class="icon-wrap">${workspaceIcon("library")}</span>
+          <div>
+            <div class="label">Notes Library</div>
+            <div class="meta">Review saved sessions</div>
+          </div>
+        </button>
+        ${WORKSPACES.map(w => `
+          <button class="workspace-card" data-workspace="${w.key}">
+            <span class="icon-wrap">${workspaceIcon(w.icon)}</span>
+            <div>
+              <div class="label">${w.label}</div>
+              <div class="meta">Open workspace</div>
+            </div>
+          </button>
+        `).join("")}
       </div>
-    ` : ""}
+    </div>
   `;
 
-  // Pillar sparklines
-  PILLARS.forEach(p => {
-    const c = document.querySelector(`canvas[data-pillar="${p.key}"]`);
-    if (c) drawSpark(c, last7PillarSeries(p.key), { min: 1, max: 10 });
-  });
-
-  // Quick adds
   root.querySelectorAll("[data-quick]").forEach(b => {
     b.addEventListener("click", () => quickAdd(b.dataset.quick));
   });
-  // Cross-tab navigations
   root.querySelectorAll("[data-go-reflect]").forEach(b => {
     b.addEventListener("click", () => { state.reflectSub = b.dataset.goReflect; switchTab("reflect"); });
   });
-  root.querySelectorAll("[data-go-jar]").forEach(b => {
-    b.addEventListener("click", () => switchTab("jar"));
-  });
   const reshuffle = root.querySelector("#reshuffle-advice");
   if (reshuffle) reshuffle.addEventListener("click", () => { renderActive(); });
+  root.querySelectorAll("[data-workspace]").forEach(b => {
+    b.addEventListener("click", () => openWorkspace(b.dataset.workspace));
+  });
+  root.querySelectorAll("[data-note-action]").forEach(b => {
+    b.addEventListener("click", () => {
+      const action = b.dataset.noteAction;
+      if (action === "new") openNewNoteFlow();
+      if (action === "library") openNotesLibrarySheet();
+    });
+  });
+}
 
-  const journalEntry = root.querySelector("[data-journal-entry]");
-  if (journalEntry) journalEntry.addEventListener("click", openJournalSheet);
+function openWorkspace(key) {
+  state.todayView = "workspace";
+  state.activeWorkspace = key;
+  renderActive();
+}
+
+function closeWorkspace() {
+  state.todayView = "dashboard";
+  state.activeWorkspace = null;
+  renderActive();
+}
+
+function renderWorkspacePage(root, key) {
+  const workspace = WORKSPACES.find(w => w.key === key);
+  if (!workspace) return closeWorkspace();
+  root.innerHTML = `
+    <div class="workspace-page">
+      <button class="workspace-back" id="workspace-back">← Back to dashboard</button>
+      <div class="card">
+        <div class="section-title" style="margin:0 0 8px"><h4>Workspace</h4></div>
+        <h2>${workspace.label}</h2>
+        <p class="muted">This workspace is set up as a placeholder page and will get dedicated tools in a future update.</p>
+      </div>
+      <div class="workspace-placeholder">
+        <strong>Coming soon</strong>
+        <div class="muted" style="font-size:13px;margin-top:4px">Navigation is now full-page with a clean back button. Existing journal and data tables stay unchanged.</div>
+      </div>
+      ${key === "reflection" ? `
+        <div class="workspace-placeholder">
+          <strong>Reflection workspace note</strong>
+          <div class="muted" style="font-size:13px;margin-top:4px">Reflection still writes to the existing <code>Journal_Entries</code> records to preserve compatibility.</div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+  root.querySelector("#workspace-back").addEventListener("click", closeWorkspace);
 }
 
 function bodySnapshotHTML({ calories, protein, motionMinutes, weeklyMinutes, motionGoal }) {
@@ -3514,8 +3644,13 @@ function pillarCardHTML(p) {
   const series = last7PillarSeries(p.key);
   const a = avg(series.filter(v => v));
   const trend = trendDirection(series);
-  const cls = trend === "up" ? "up" : trend === "down" ? "down" : "flat";
-  const arrow = trend === "up" ? "Improving" : trend === "down" ? "Easing" : (a ? "Steady" : "No data");
+  const cls = trend.startsWith("up") ? "up" : trend.startsWith("down") ? "down" : "flat";
+  const arrow =
+    trend === "up" ? "Improving" :
+    trend === "up_slight" ? "Slight rise" :
+    trend === "down" ? "Easing" :
+    trend === "down_slight" ? "Slight dip" :
+    (a ? "Steady" : "No data");
   return `
     <button class="pillar-card" data-pillar-detail="${p.key}">
       <div class="top">
@@ -3528,7 +3663,35 @@ function pillarCardHTML(p) {
   `;
 }
 
+function pillarRingCardHTML(p) {
+  const series = last7PillarSeriesRaw(p.key);
+  const recent = series.filter(v => v != null);
+  const score = recent.length ? avg(recent) : 0;
+  const trend = trendDirection(recent);
+  const trendMeta = trendArrowMeta(trend);
+  const scoreLabel = recent.length ? `${score.toFixed(1)} avg` : "No data";
+  return `
+    <div class="pillar-ring-card">
+      <div class="pillar-ring-head">
+        <div class="name">${p.name}</div>
+        <div class="score">${scoreLabel}</div>
+      </div>
+      <div class="pillar-ring-viz" style="--ring-pct:${clamp((score / 10) * 100, 0, 100)};--ring-color:${trendMeta.color}">
+        <div class="pillar-ring-center ${trendMeta.tone}">${trendMeta.arrow}</div>
+      </div>
+      <div class="pillar-ring-meta">${trendMeta.label}</div>
+    </div>
+  `;
+}
+
 function last7PillarSeries(pillarKey) {
+  const out = last7PillarSeriesRaw(pillarKey);
+  // Fill gaps for sparkline by carrying last known forward (visual continuity)
+  let last = null;
+  return out.map(v => { if (v != null) last = v; return last == null ? 0 : last; });
+}
+
+function last7PillarSeriesRaw(pillarKey) {
   const list = state.data.Pillar_Checkins || [];
   const out = [];
   for (let i = 6; i >= 0; i--) {
@@ -3539,19 +3702,28 @@ function last7PillarSeries(pillarKey) {
       out.push(v);
     } else out.push(null);
   }
-  // Fill gaps for sparkline by carrying last known forward (visual continuity)
-  let last = null;
-  return out.map(v => { if (v != null) last = v; return last == null ? 0 : last; });
+  return out;
 }
 function trendDirection(series) {
-  const valid = series.filter(v => v);
+  const valid = series.filter(v => v != null && v !== 0);
   if (valid.length < 2) return "flat";
-  const half = Math.floor(valid.length/2);
+  const half = Math.floor(valid.length / 2);
   const a = avg(valid.slice(0, half));
   const b = avg(valid.slice(half));
-  if (b - a > 0.4) return "up";
-  if (a - b > 0.4) return "down";
+  const delta = b - a;
+  if (delta >= 0.9) return "up";
+  if (delta >= 0.35) return "up_slight";
+  if (delta <= -0.9) return "down";
+  if (delta <= -0.35) return "down_slight";
   return "flat";
+}
+
+function trendArrowMeta(trend) {
+  if (trend === "up") return { arrow: "↑", label: "Improving", tone: "positive", color: "var(--green-500)" };
+  if (trend === "up_slight") return { arrow: "↗", label: "Slightly improving", tone: "positive", color: "var(--green-500)" };
+  if (trend === "down") return { arrow: "↓", label: "Declining", tone: "negative", color: "var(--red-500)" };
+  if (trend === "down_slight") return { arrow: "↘", label: "Slightly declining", tone: "negative", color: "var(--red-500)" };
+  return { arrow: "→", label: "Unchanged", tone: "neutral", color: "var(--accent)" };
 }
 function prettyPillarName(key) {
   const p = PILLARS.find(x => x.key === key); return p ? p.name : key;
@@ -3658,6 +3830,7 @@ function quickAdd(kind) {
   if (kind === "food")    return openFoodSheet();
   if (kind === "workout") return openWorkoutSheet();
   if (kind === "weight")  return openWeightSheet();
+  if (kind === "checkin") return openPillarSheet();
   if (kind === "win")     return openJarSheet("W");
   if (kind === "failure") return openJarSheet("L");
   if (kind === "journal") return openJournalSheet();
@@ -3692,7 +3865,7 @@ function openMoreSheet() {
     <div class="more-list">
       ${row("failure", "Add Failure",       "Drop a marble in the L jar — write the lesson", ICONS.failure, "danger")}
       ${row("weight",  "Log Weight",        "Quick body-weight entry",                       ICONS.weight)}
-      ${row("journal", "Journal Entry",     "Free-form note, decision, or grateful",         ICONS.journal)}
+      ${row("journal", "Reflection Entry",  "Free-form note, decision, or grateful",         ICONS.journal)}
       ${row("pillars", "Pillar Check-in",   "Mark a pillar attended-to today",               ICONS.pillars, "success")}
       ${row("advice",  "Add to Advice Jar", "Save a piece of wisdom for the future",         ICONS.advice)}
     </div>
@@ -4565,7 +4738,7 @@ function renderReflect(root) {
     <div class="segmented">
       <button class="${state.reflectSub==='pillars'?'active':''}" data-reflect-sub="pillars">Pillars</button>
       <button class="${state.reflectSub==='advice'?'active':''}" data-reflect-sub="advice">Advice</button>
-      <button class="${state.reflectSub==='journal'?'active':''}" data-reflect-sub="journal">Journal</button>
+      <button class="${state.reflectSub==='journal'?'active':''}" data-reflect-sub="journal">Reflection</button>
     </div>
     <div id="reflect-subview"></div>
   `;
@@ -4694,8 +4867,8 @@ function renderJournal(root) {
 }
 
 function renderJournalList(items) {
-  if (!items.length) return `<div class="empty">No journal entries match.</div>`;
-  return `<div class="list">${items.map(j=>`<button class="list-row ${j.sync_status||'saved'}" data-journal-id="${j.id}"><span class="sync-dot"></span><div class="grow"><div class="title">${escapeHTML(j.title||j.journal_type||"Journal entry")}</div><div class="meta">${escapeHTML(j.journal_type||"General reflection")} · ${fmtRelDay(j.date)}${j.tags ? " · " + escapeHTML(j.tags) : ""}</div></div></button>`).join("")}</div>`;
+  if (!items.length) return `<div class="empty">No reflection entries match.</div>`;
+  return `<div class="list">${items.map(j=>`<button class="list-row ${j.sync_status||'saved'}" data-journal-id="${j.id}"><span class="sync-dot"></span><div class="grow"><div class="title">${escapeHTML(j.title||j.journal_type||"Reflection entry")}</div><div class="meta">${escapeHTML(j.journal_type||"General reflection")} · ${fmtRelDay(j.date)}${j.tags ? " · " + escapeHTML(j.tags) : ""}</div></div></button>`).join("")}</div>`;
 }
 
 function bindJournalRows(root) {
@@ -4707,10 +4880,10 @@ function openJournalDetail(id) {
   if (!j) return;
   openSheet(`
     <div class="row-between mb-sm">
-      <span class="badge gold">${escapeHTML(j.journal_type || "Journal")}</span>
+      <span class="badge gold">${escapeHTML(j.journal_type || "Reflection")}</span>
       <span class="muted" style="font-size:12px">${fmtRelDay(j.date)}</span>
     </div>
-    <h2>${escapeHTML(j.title || "Journal entry")}</h2>
+    <h2>${escapeHTML(j.title || "Reflection entry")}</h2>
     <div style="white-space:pre-wrap;line-height:1.6;color:var(--text-soft);margin-top:12px">${escapeHTML(j.entry_text || "")}</div>
     ${j.tags ? `<div class="muted" style="font-size:12px;margin-top:14px">${escapeHTML(j.tags)}</div>` : ""}
     <div class="sheet-actions"><span class="spacer"></span><button class="btn btn-primary" id="journal-detail-close">Close</button></div>
@@ -4719,7 +4892,7 @@ function openJournalDetail(id) {
 
 function openJournalSheet() {
   openSheet(`
-    <h2>New journal entry</h2><p class="lede">Flexible space. Keep it as short or long as needed.</p>
+    <h2>New reflection entry</h2><p class="lede">Flexible space. Keep it as short or long as needed.</p>
     <div class="field"><label>Title</label><input class="input" id="journal-title" /></div>
     <div class="field"><label>Type</label><select class="input" id="journal-type">${JOURNAL_TYPES.map(t=>`<option>${t}</option>`).join("")}</select></div>
     <div class="field"><label>Entry</label><textarea class="input" id="journal-text" rows="6"></textarea></div>
@@ -4737,7 +4910,7 @@ function openJournalSheet() {
         tags: document.getElementById("journal-tags").value.trim(),
         date: document.getElementById("journal-date").value || todayISO()
       });
-      closeSheet(); renderActive(); toast("Journal saved");
+      closeSheet(); renderActive(); toast("Reflection saved");
     });
     document.getElementById("journal-title").focus();
   });
