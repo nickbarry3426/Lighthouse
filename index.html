@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Lighthouse" />
-<link rel="manifest" href="manifest.json" />
+<link rel="manifest" href="manifest.json?v=2.1.0" />
 <title>Lighthouse</title>
 <style>
 /* ============================================================
@@ -1897,6 +1897,10 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   background: var(--bg);
   display: flex;
   flex-direction: column;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 #note-screen.hidden { display: none; }
 .note-topbar {
@@ -1936,6 +1940,9 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
   padding: 10px 0 calc(20px + var(--safe-bottom));
 }
 .note-canvas-stack {
@@ -1943,6 +1950,7 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   width: 100%;
   max-width: 980px;
   margin: 0 auto;
+  touch-action: none;
 }
 .note-chunk {
   display: block;
@@ -1954,6 +1962,31 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   background-size: 100% 32px;
   border-bottom: 1px solid var(--border);
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.note-topbar,
+.note-topbar button {
+  touch-action: manipulation;
+}
+html.handwriting-mode,
+html.handwriting-mode body,
+body.handwriting-mode {
+  overflow: hidden;
+}
+body.handwriting-mode,
+body.handwriting-mode * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body.handwriting-mode #note-save,
+body.handwriting-mode #note-close,
+body.handwriting-mode .ink-dot,
+body.handwriting-mode .thickness-btn {
+  -webkit-user-select: auto;
+  user-select: auto;
 }
 
 .processing-placeholder {
@@ -2100,7 +2133,7 @@ canvas.spark { display: block; width: 100%; height: 100%; }
  * ============================================================ */
 
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzVR0NXiiQuxsRFD7mcQSszh5C8EsqarzFwyRuhP8mambOBXlrkinrz9RRVE2TwyjI/exec";
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const DEVICE_ID = (() => {
   let d = localStorage.getItem("lh.device");
   if (!d) { d = "d_" + Math.random().toString(36).slice(2, 10); localStorage.setItem("lh.device", d); }
@@ -2627,6 +2660,7 @@ const PEN_SIZES = [
 ];
 const NOTE_CHUNK_HEIGHT = 620;
 const NOTE_DRAFT_LIMIT = 220;
+const NOTE_SIDE_GUTTER = 10;
 const noteUI = {
   el: document.getElementById("note-screen"),
   stack: document.getElementById("note-canvas-stack"),
@@ -2645,7 +2679,8 @@ const noteUI = {
   activePen: null,
   color: INK_COLORS[0].value,
   size: PEN_SIZES[1].px,
-  autosaveTimer: null
+  autosaveTimer: null,
+  interactionGuardsBound: false
 };
 
 function ensureNoteSources() {
@@ -2736,11 +2771,18 @@ function startHandwritingNote(sourceId) {
   noteUI.chunks = [];
   noteUI.strokeDraft = [];
   noteUI.activeStroke = null;
+  noteUI.drawing = false;
+  noteUI.pointerId = null;
+  noteUI.activePen = null;
+  noteUI.lastPenAt = 0;
   noteUI.wrap.scrollTop = 0;
+  document.documentElement.classList.add("handwriting-mode");
+  document.body.classList.add("handwriting-mode");
   ensureNoteChunk(0);
   ensureNoteChunk(1);
   buildInkControls();
   bindNotePointerEvents();
+  bindNoteInteractionGuards();
 }
 
 function closeHandwritingNote() {
@@ -2750,7 +2792,12 @@ function closeHandwritingNote() {
   noteUI.chunks = [];
   noteUI.strokeDraft = [];
   noteUI.activeStroke = null;
+  noteUI.drawing = false;
   noteUI.pointerId = null;
+  noteUI.activePen = null;
+  noteUI.lastPenAt = 0;
+  document.documentElement.classList.remove("handwriting-mode");
+  document.body.classList.remove("handwriting-mode");
   if (noteUI.autosaveTimer) clearTimeout(noteUI.autosaveTimer);
 }
 
@@ -2774,10 +2821,11 @@ function buildInkControls() {
 function bindNotePointerEvents() {
   if (noteUI.wrap.dataset.bound === "1") return;
   noteUI.wrap.dataset.bound = "1";
-  noteUI.wrap.addEventListener("pointerdown", onNotePointerDown);
-  noteUI.wrap.addEventListener("pointermove", onNotePointerMove);
-  noteUI.wrap.addEventListener("pointerup", onNotePointerUp);
-  noteUI.wrap.addEventListener("pointercancel", onNotePointerUp);
+  noteUI.wrap.addEventListener("pointerdown", onNotePointerDown, { passive: false });
+  noteUI.wrap.addEventListener("pointermove", onNotePointerMove, { passive: false });
+  noteUI.wrap.addEventListener("pointerup", onNotePointerUp, { passive: false });
+  noteUI.wrap.addEventListener("pointercancel", onNotePointerUp, { passive: false });
+  noteUI.wrap.addEventListener("lostpointercapture", onNotePointerUp, { passive: false });
   noteUI.wrap.addEventListener("scroll", () => {
     const count = Math.ceil(noteUI.wrap.scrollHeight / NOTE_CHUNK_HEIGHT);
     if (noteUI.wrap.scrollTop + noteUI.wrap.clientHeight > (count - 1) * NOTE_CHUNK_HEIGHT - 180) {
@@ -2786,9 +2834,47 @@ function bindNotePointerEvents() {
   }, { passive: true });
 }
 
+function bindNoteInteractionGuards() {
+  if (noteUI.interactionGuardsBound) return;
+  noteUI.interactionGuardsBound = true;
+  const blockWhenNoteOpen = e => {
+    if (noteUI.el.classList.contains("hidden")) return;
+    if (e.cancelable) e.preventDefault();
+  };
+  ["touchstart", "touchmove", "gesturestart", "gesturechange", "gestureend", "selectstart", "dragstart"].forEach(evt => {
+    noteUI.wrap.addEventListener(evt, blockWhenNoteOpen, { passive: false });
+    noteUI.stack.addEventListener(evt, blockWhenNoteOpen, { passive: false });
+  });
+  noteUI.el.addEventListener("pointerdown", e => {
+    if (noteUI.el.classList.contains("hidden")) return;
+    if (e.pointerType === "pen" && !noteUI.wrap.contains(e.target)) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+  noteUI.el.addEventListener("click", e => {
+    if (noteUI.el.classList.contains("hidden")) return;
+    if (noteUI.drawing && e.target !== noteUI.saveBtn) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+  noteUI.saveBtn.addEventListener("pointerdown", e => {
+    if (e.pointerType === "pen" && noteUI.drawing && e.cancelable) e.preventDefault();
+  }, { passive: false });
+  noteUI.saveBtn.addEventListener("mousedown", e => e.preventDefault());
+}
+
 function pointerPoint(e) {
+  const clientX = Number.isFinite(e.clientX) ? e.clientX : 0;
+  const clientY = Number.isFinite(e.clientY) ? e.clientY : 0;
   const rect = noteUI.stack.getBoundingClientRect();
-  return { x: e.clientX - rect.left - 10, y: e.clientY - rect.top + noteUI.wrap.scrollTop - 10 };
+  const x = clientX - rect.left - NOTE_SIDE_GUTTER;
+  const y = clientY - rect.top + noteUI.wrap.scrollTop;
+  return {
+    x: Math.max(0, Math.min(rect.width - NOTE_SIDE_GUTTER * 2, x)),
+    y: Math.max(0, y)
+  };
 }
 
 function shouldAcceptPointer(e) {
@@ -2806,9 +2892,13 @@ function shouldAcceptPointer(e) {
 
 function onNotePointerDown(e) {
   if (!state.notes.activeSourceId || !shouldAcceptPointer(e)) return;
+  if (e.button !== undefined && e.button !== 0) return;
   e.preventDefault();
+  e.stopPropagation();
   noteUI.pointerId = e.pointerId;
   noteUI.drawing = true;
+  noteUI.activePen = e.pointerId;
+  noteUI.lastPenAt = performance.now();
   const p = pointerPoint(e);
   noteUI.activeStroke = {
     id: uid(),
@@ -2819,12 +2909,13 @@ function onNotePointerDown(e) {
     points: [{ ...p, t: performance.now(), pressure: e.pressure || 0.5 }]
   };
   drawStrokePoint(noteUI.activeStroke, noteUI.activeStroke.points[0], noteUI.activeStroke.points[0], true);
-  noteUI.wrap.setPointerCapture(e.pointerId);
+  if (noteUI.wrap.setPointerCapture) noteUI.wrap.setPointerCapture(e.pointerId);
 }
 
 function onNotePointerMove(e) {
   if (!noteUI.drawing || e.pointerId !== noteUI.pointerId || !noteUI.activeStroke) return;
   e.preventDefault();
+  e.stopPropagation();
   const p = pointerPoint(e);
   const pts = noteUI.activeStroke.points;
   const prev = pts[pts.length - 1];
@@ -2839,6 +2930,7 @@ function onNotePointerMove(e) {
 function onNotePointerUp(e) {
   if (!noteUI.drawing || e.pointerId !== noteUI.pointerId || !noteUI.activeStroke) return;
   e.preventDefault();
+  e.stopPropagation();
   const pts = noteUI.activeStroke.points;
   if (pts.length > 1) {
     const end = pts[pts.length - 1];
@@ -2849,6 +2941,9 @@ function onNotePointerUp(e) {
   noteUI.activeStroke = null;
   noteUI.drawing = false;
   noteUI.pointerId = null;
+  if (noteUI.wrap.hasPointerCapture && noteUI.wrap.hasPointerCapture(e.pointerId)) {
+    noteUI.wrap.releasePointerCapture(e.pointerId);
+  }
   queueNoteDraftSave();
 }
 
@@ -4972,7 +5067,8 @@ function hexA(color, alpha) {
    ---------------------------------------------------------- */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(err => console.warn("Service worker registration failed:", err));
+    navigator.serviceWorker.register("./sw.js?v=2.1.0", { updateViaCache: "none" })
+      .catch(err => console.warn("Service worker registration failed:", err));
   });
 }
 startPin();
