@@ -2217,7 +2217,9 @@ const KEYS = {
   settings: "lh.settings.v2",
   noteSources: "lh.note.sources.v1",
   noteSessions: "lh.note.sessions.v1",
-  noteDraft: "lh.note.draft.v1"
+  noteDraft: "lh.note.draft.v1",
+  workspaceMeta: "lh.workspace.meta.v1",
+  workspaceData: "lh.workspace.data.v1"
 };
 
 const TABLES = [
@@ -2242,6 +2244,71 @@ const WORKSPACES = [
   { key: "work", label: "Work", icon: "work" },
   { key: "general", label: "General", icon: "general" }
 ];
+const WORKSPACE_MODEL_VERSION = 1;
+const WORKSPACE_ENTITY_BUCKETS = [
+  "workspaces",
+  "folders",
+  "sources",
+  "note_sessions",
+  "cleaned_note_blocks",
+  "tags",
+  "attachments"
+];
+const WORKSPACE_KIND_LABELS = {
+  books: "Books",
+  reflection: "Reflection",
+  learning: "Learning",
+  projects: "Projects",
+  work: "Work",
+  general: "General"
+};
+
+const WORKSPACE_TYPE_FIELDS = {
+  books: () => ({
+    book_title: "",
+    cover_image_metadata: null,
+    start_read_date: null,
+    finished_date: null,
+    custom_labels: [],
+    chapters: [],
+    compiled_notes: [],
+    raw_handwritten_sessions: [],
+    manual_text_notes: []
+  }),
+  reflection: () => ({
+    dated_entries: [],
+    mood_checkin_link: null,
+    plain_text_content: "",
+    handwritten_session_attachment_id: null
+  }),
+  learning: () => ({
+    topic_name: "",
+    folder_id: null,
+    tags: [],
+    compiled_notes: [],
+    manual_notes: [],
+    handwritten_sessions: []
+  }),
+  projects: () => ({
+    project_name: "",
+    folder_id: null,
+    status: "active",
+    notes: [],
+    decisions: [],
+    sessions: []
+  }),
+  work: () => ({
+    folder_id: null,
+    source_id: null,
+    notes: [],
+    sessions: []
+  }),
+  general: () => ({
+    folders: [],
+    notes: []
+  })
+};
+
 
 const WORKOUT_CATEGORIES = [
   "Chest","Bicep","Tricep","Back","Quads","Hamstrings","Calves","Glutes","Running","Stretching","Abs"
@@ -2310,7 +2377,8 @@ const state = {
     sessions: loadJSON(KEYS.noteSessions, []),
     activeSourceId: null,
     autosaveAt: 0
-  }
+  },
+  workspaceStore: null
 };
 if (!state.settings.weeklyPlan) state.settings.weeklyPlan = defaultWeeklyPlan();
 if (!state.settings.weightRange) state.settings.weightRange = "1m";
@@ -2345,6 +2413,175 @@ function persistOutbox() { saveJSON(KEYS.outbox, state.outbox); }
 function persistSettings() { saveJSON(KEYS.settings, state.settings); }
 function persistNoteSources() { saveJSON(KEYS.noteSources, state.notes.sources); }
 function persistNoteSessions() { saveJSON(KEYS.noteSessions, state.notes.sessions); }
+
+
+function blankWorkspaceStore() {
+  const seeded = {
+    version: WORKSPACE_MODEL_VERSION,
+    metadata: {
+      schema_version: WORKSPACE_MODEL_VERSION,
+      created_at: nowISO(),
+      updated_at: nowISO(),
+      migrated_from_legacy_at: null
+    },
+    legacy: {
+      journal_entry_ids: []
+    }
+  };
+  WORKSPACE_ENTITY_BUCKETS.forEach(bucket => seeded[bucket] = []);
+  return seeded;
+}
+
+function ensureWorkspaceStoreShape(store) {
+  const next = store && typeof store === "object" ? store : {};
+  next.version = Number(next.version) || WORKSPACE_MODEL_VERSION;
+  next.metadata = next.metadata || {};
+  next.metadata.schema_version = WORKSPACE_MODEL_VERSION;
+  if (!next.metadata.created_at) next.metadata.created_at = nowISO();
+  next.metadata.updated_at = nowISO();
+  if (!next.metadata.migrated_from_legacy_at) next.metadata.migrated_from_legacy_at = null;
+  next.legacy = next.legacy || { journal_entry_ids: [] };
+  if (!Array.isArray(next.legacy.journal_entry_ids)) next.legacy.journal_entry_ids = [];
+  WORKSPACE_ENTITY_BUCKETS.forEach(bucket => {
+    if (!Array.isArray(next[bucket])) next[bucket] = [];
+  });
+  return next;
+}
+
+function loadWorkspaceStore() {
+  const stored = loadJSON(KEYS.workspaceData, null);
+  return ensureWorkspaceStoreShape(stored || blankWorkspaceStore());
+}
+
+function persistWorkspaceStore() {
+  if (!state.workspaceStore) state.workspaceStore = loadWorkspaceStore();
+  state.workspaceStore.metadata.updated_at = nowISO();
+  saveJSON(KEYS.workspaceData, state.workspaceStore);
+  saveJSON(KEYS.workspaceMeta, state.workspaceStore.metadata);
+}
+
+function workspaceCollection(name) {
+  if (!state.workspaceStore) state.workspaceStore = loadWorkspaceStore();
+  return state.workspaceStore[name] || [];
+}
+
+function createWorkspaceEntity(name, entity) {
+  const list = workspaceCollection(name);
+  const row = Object.assign({ id: uid(), created_at: nowISO(), updated_at: nowISO() }, entity || {});
+  list.unshift(row);
+  state.workspaceStore[name] = list;
+  persistWorkspaceStore();
+  markWorkspaceEntityForSync(name, row.id, "create");
+  return row;
+}
+
+function readWorkspaceEntities(name, filterFn = null) {
+  const list = workspaceCollection(name).slice();
+  return filterFn ? list.filter(filterFn) : list;
+}
+
+function updateWorkspaceEntity(name, id, patch) {
+  const list = workspaceCollection(name);
+  const target = list.find(x => x.id === id);
+  if (!target) return null;
+  Object.assign(target, patch || {}, { updated_at: nowISO() });
+  persistWorkspaceStore();
+  markWorkspaceEntityForSync(name, id, "update");
+  return target;
+}
+
+function appendWorkspaceNote(workspaceId, text, opts = {}) {
+  const block = createWorkspaceEntity("cleaned_note_blocks", {
+    workspace_id: workspaceId,
+    session_id: opts.session_id || null,
+    source_id: opts.source_id || null,
+    content: text || "",
+    format: opts.format || "plain_text",
+    tags: Array.isArray(opts.tags) ? opts.tags : [],
+    created_by: opts.created_by || "local"
+  });
+  return block;
+}
+
+function createWorkspaceTag(label, workspaceId = null) {
+  return createWorkspaceEntity("tags", {
+    workspace_id: workspaceId,
+    label: label || "",
+    normalized: String(label || "").trim().toLowerCase()
+  });
+}
+
+function createAttachmentMetadata(payload = {}) {
+  return createWorkspaceEntity("attachments", {
+    workspace_id: payload.workspace_id || null,
+    session_id: payload.session_id || null,
+    source_id: payload.source_id || null,
+    filename: payload.filename || "",
+    mime_type: payload.mime_type || "",
+    byte_size: Number(payload.byte_size) || 0,
+    local_ref: payload.local_ref || null
+  });
+}
+
+function buildWorkspaceSyncPayload() {
+  return {
+    version: state.workspaceStore?.version || WORKSPACE_MODEL_VERSION,
+    metadata: state.workspaceStore?.metadata || {},
+    entities: Object.fromEntries(WORKSPACE_ENTITY_BUCKETS.map(k => [k, workspaceCollection(k)]))
+  };
+}
+
+function queueWorkspaceSyncJob(reason = "manual") {
+  // Reserved for future backend sync integration.
+  return { queued: false, reason, at: nowISO() };
+}
+
+function markWorkspaceEntityForSync(entity, id, action) {
+  // Reserved for future backend sync integration.
+  return { entity, id, action, at: nowISO() };
+}
+
+function migrateLegacyJournalToWorkspaceStore() {
+  const journalRows = state.data.Journal_Entries || [];
+  if (!journalRows.length) return;
+  const legacyIds = new Set(state.workspaceStore.legacy.journal_entry_ids || []);
+  const reflectionWorkspace = ensureWorkspaceForKind("reflection");
+  let changed = false;
+  journalRows.forEach(entry => {
+    if (!entry?.id || legacyIds.has(entry.id)) return;
+    legacyIds.add(entry.id);
+    createWorkspaceEntity("cleaned_note_blocks", {
+      workspace_id: reflectionWorkspace.id,
+      legacy_journal_id: entry.id,
+      source: "legacy_journal",
+      date: entry.date || todayISO(),
+      content: entry.entry_text || "",
+      title: entry.title || entry.journal_type || "Legacy reflection",
+      tags: (entry.tags || "").split(",").map(x => x.trim()).filter(Boolean),
+      format: "plain_text",
+      created_by: "legacy_migration"
+    });
+    changed = true;
+  });
+  if (changed) {
+    state.workspaceStore.legacy.journal_entry_ids = [...legacyIds];
+    state.workspaceStore.metadata.migrated_from_legacy_at = state.workspaceStore.metadata.migrated_from_legacy_at || nowISO();
+    persistWorkspaceStore();
+  }
+}
+
+function ensureWorkspaceForKind(kind) {
+  const existing = workspaceCollection("workspaces").find(w => w.type === kind);
+  if (existing) return existing;
+  return createWorkspaceEntity("workspaces", {
+    type: kind,
+    name: WORKSPACE_KIND_LABELS[kind] || "Workspace",
+    folder_id: null,
+    status: "active",
+    labels: [],
+    payload: (WORKSPACE_TYPE_FIELDS[kind] ? WORKSPACE_TYPE_FIELDS[kind]() : {})
+  });
+}
 
 /* ----------------------------------------------------------
    IDs, dates
@@ -3257,6 +3494,9 @@ function bootApp() {
   // Load cached data
   const cached = loadJSON(KEYS.cache, null);
   if (cached) state.data = Object.assign(blankData(), cached);
+  state.workspaceStore = loadWorkspaceStore();
+  ["books","reflection","learning","projects","work","general"].forEach(ensureWorkspaceForKind);
+  migrateLegacyJournalToWorkspaceStore();
   hydrateSettingsFromRows();
 
   // First render from cache
@@ -3391,6 +3631,51 @@ function closeWorkspace() {
   renderActive();
 }
 
+function workspaceLegacyPreviewHTML(kind) {
+  const ws = workspaceCollection("workspaces").find(w => w.type === kind);
+  if (!ws) return "";
+  const notes = readWorkspaceEntities("cleaned_note_blocks", n => n.workspace_id === ws.id);
+  const sessions = readWorkspaceEntities("note_sessions", s => s.workspace_id === ws.id);
+  const legacyCount = notes.filter(n => n.source === "legacy_journal").length;
+  return `
+    <div class="workspace-placeholder">
+      <strong>Local entities</strong>
+      <div class="muted" style="font-size:13px;margin-top:4px">${notes.length} note block${notes.length===1?"":"s"}, ${sessions.length} session${sessions.length===1?"":"s"}${kind === "reflection" ? ` · ${legacyCount} legacy journal` : ""}</div>
+      ${kind === "reflection" && legacyCount ? `<div class="muted" style="font-size:13px;margin-top:6px">Legacy journal entries are mirrored here for backward-compatible browsing.</div>` : ""}
+    </div>
+  `;
+}
+
+function createSampleWorkspaceItem(kind) {
+  const ws = ensureWorkspaceForKind(kind);
+  const folder = createWorkspaceEntity("folders", {
+    workspace_id: ws.id,
+    name: `${WORKSPACE_KIND_LABELS[kind] || "Workspace"} Inbox`,
+    parent_folder_id: null
+  });
+  const source = createWorkspaceEntity("sources", {
+    workspace_id: ws.id,
+    folder_id: folder.id,
+    name: `${WORKSPACE_KIND_LABELS[kind] || "Workspace"} Source`,
+    source_type: kind === "books" ? "book" : "note"
+  });
+  const session = createWorkspaceEntity("note_sessions", {
+    workspace_id: ws.id,
+    folder_id: folder.id,
+    source_id: source.id,
+    started_at: nowISO(),
+    ended_at: nowISO(),
+    raw_handwritten_session_ref: null,
+    manual_text_note: "Sample local session"
+  });
+  appendWorkspaceNote(ws.id, `Sample note for ${WORKSPACE_KIND_LABELS[kind] || kind}`, {
+    source_id: source.id,
+    session_id: session.id,
+    tags: ["sample", kind]
+  });
+  return { ws, folder, source, session };
+}
+
 function renderWorkspacePage(root, key) {
   const workspace = WORKSPACES.find(w => w.key === key);
   if (!workspace) return closeWorkspace();
@@ -3400,21 +3685,34 @@ function renderWorkspacePage(root, key) {
       <div class="card">
         <div class="section-title" style="margin:0 0 8px"><h4>Workspace</h4></div>
         <h2>${workspace.label}</h2>
-        <p class="muted">This workspace is set up as a placeholder page and will get dedicated tools in a future update.</p>
+        <p class="muted">This workspace now writes to a future-ready local model while preserving current dashboard structures.</p>
       </div>
       <div class="workspace-placeholder">
-        <strong>Coming soon</strong>
-        <div class="muted" style="font-size:13px;margin-top:4px">Navigation is now full-page with a clean back button. Existing journal and data tables stay unchanged.</div>
-      </div>
-      ${key === "reflection" ? `
-        <div class="workspace-placeholder">
-          <strong>Reflection workspace note</strong>
-          <div class="muted" style="font-size:13px;margin-top:4px">Reflection still writes to the existing <code>Journal_Entries</code> records to preserve compatibility.</div>
+        <strong>Future-ready local model enabled</strong>
+        <div class="muted" style="font-size:13px;margin-top:4px">Versioned storage and migration helpers are active locally. Existing check-ins, workouts, weight, food, and journal data remain untouched.</div>
+        <div class="sheet-actions" style="margin-top:10px">
+          <button class="btn btn-sm" id="workspace-add-sample">Create sample local item</button>
+          <button class="btn btn-sm" id="workspace-open-store">View local counts</button>
         </div>
-      ` : ""}
+      </div>
+      ${workspaceLegacyPreviewHTML(key)}
     </div>
   `;
   root.querySelector("#workspace-back").addEventListener("click", closeWorkspace);
+  const sampleBtn = root.querySelector("#workspace-add-sample");
+  if (sampleBtn) sampleBtn.addEventListener("click", () => {
+    createSampleWorkspaceItem(key);
+    toast("Sample workspace item saved locally");
+    renderActive();
+  });
+  const viewBtn = root.querySelector("#workspace-open-store");
+  if (viewBtn) viewBtn.addEventListener("click", () => {
+    const payload = buildWorkspaceSyncPayload();
+    const summary = WORKSPACE_ENTITY_BUCKETS.map(name => `${name}: ${(payload.entities[name] || []).length}`).join("\n");
+    openSheet(`<h2>Workspace local store</h2><pre style="white-space:pre-wrap;font-size:12px">${escapeHTML(summary)}</pre><div class="sheet-actions"><span class="spacer"></span><button class="btn btn-primary" id="workspace-store-close">Close</button></div>`, () => {
+      document.getElementById("workspace-store-close").addEventListener("click", closeSheet);
+    });
+  });
 }
 
 function bodySnapshotHTML({ calories, protein, motionMinutes, weeklyMinutes, motionGoal }) {
