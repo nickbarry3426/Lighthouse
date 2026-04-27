@@ -2047,18 +2047,19 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   position: sticky;
   top: 0;
   z-index: 6;
-  padding: calc(10px + var(--safe-top)) 14px 10px;
+  padding: calc(10px + var(--safe-top)) 12px 10px;
   background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 85%, transparent));
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
-.note-meta { min-width: 140px; margin-right: auto; }
+.note-meta { min-width: 150px; margin-right: auto; }
 .note-meta .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .note-meta .value { font-size: 14px; color: var(--text-soft); }
-.note-control-group { display: flex; gap: 6px; align-items: center; }
+.note-control-group { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .ink-dot {
   width: 26px; height: 26px; border-radius: 999px;
   border: 1px solid rgba(0,0,0,.2);
@@ -2083,19 +2084,19 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
-  padding: 10px 0 calc(20px + var(--safe-bottom));
+  padding: 6px 0 calc(20px + var(--safe-bottom));
 }
 .note-canvas-stack {
   position: relative;
   width: 100%;
-  max-width: 980px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   touch-action: none;
 }
 .note-chunk {
   display: block;
-  width: calc(100% - 20px);
-  margin: 0 10px;
+  width: 100%;
+  margin: 0;
   height: 620px;
   background:
     linear-gradient(180deg, transparent 31px, color-mix(in srgb, var(--border) 75%, transparent) 32px);
@@ -2105,6 +2106,16 @@ canvas.spark { display: block; width: 100%; height: 100%; }
   -webkit-user-select: none;
   user-select: none;
   -webkit-user-drag: none;
+}
+@media (max-width: 880px) {
+  .note-topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .note-meta {
+    width: 100%;
+    margin-right: 0;
+  }
 }
 .note-topbar,
 .note-topbar button {
@@ -3055,7 +3066,7 @@ const PEN_SIZES = [
 ];
 const NOTE_CHUNK_HEIGHT = 620;
 const NOTE_DRAFT_LIMIT = 220;
-const NOTE_SIDE_GUTTER = 10;
+const NOTE_SIDE_GUTTER = 0;
 const noteUI = {
   el: document.getElementById("note-screen"),
   stack: document.getElementById("note-canvas-stack"),
@@ -3075,7 +3086,8 @@ const noteUI = {
   color: INK_COLORS[0].value,
   size: PEN_SIZES[1].px,
   autosaveTimer: null,
-  interactionGuardsBound: false
+  interactionGuardsBound: false,
+  context: null
 };
 
 function ensureNoteSources() {
@@ -3096,10 +3108,11 @@ function ensureNoteChunk(index) {
   canvas.className = "note-chunk";
   canvas.dataset.chunk = String(index);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const cssWidth = Math.max(300, Math.floor(noteUI.stack.clientWidth - 20));
+  const cssWidth = Math.max(300, Math.floor(noteUI.stack.clientWidth - NOTE_SIDE_GUTTER * 2));
   canvas.width = Math.floor(cssWidth * dpr);
   canvas.height = Math.floor(NOTE_CHUNK_HEIGHT * dpr);
   canvas.style.height = NOTE_CHUNK_HEIGHT + "px";
+  canvas.style.width = cssWidth + "px";
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
   ctx.lineJoin = "round";
@@ -3156,10 +3169,18 @@ function openNewNoteFlow() {
   });
 }
 
-function startHandwritingNote(sourceId) {
+function noteContextLabel(source) {
+  const base = source ? `${source.name} · ${source.kind}` : "Unknown source";
+  if (!noteUI.context?.workspace_type) return base;
+  const chapter = noteUI.context.chapter_name ? ` · ${noteUI.context.chapter_name}` : "";
+  return `${base} · ${noteUI.context.workspace_type}${chapter}`;
+}
+
+function startHandwritingNote(sourceId, context = null) {
   state.notes.activeSourceId = sourceId;
   const source = state.notes.sources.find(s => s.id === sourceId);
-  noteUI.source.textContent = source ? `${source.name} · ${source.kind}` : "Unknown source";
+  noteUI.context = context ? { ...context } : null;
+  noteUI.source.textContent = noteContextLabel(source);
   noteUI.el.classList.remove("hidden");
   noteUI.el.setAttribute("aria-hidden", "false");
   noteUI.stack.innerHTML = "";
@@ -3191,6 +3212,7 @@ function closeHandwritingNote() {
   noteUI.pointerId = null;
   noteUI.activePen = null;
   noteUI.lastPenAt = 0;
+  noteUI.context = null;
   document.documentElement.classList.remove("handwriting-mode");
   document.body.classList.remove("handwriting-mode");
   if (noteUI.autosaveTimer) clearTimeout(noteUI.autosaveTimer);
@@ -3303,7 +3325,7 @@ function onNotePointerDown(e) {
     started_at: nowISO(),
     points: [{ ...p, t: performance.now(), pressure: e.pressure || 0.5 }]
   };
-  drawStrokePoint(noteUI.activeStroke, noteUI.activeStroke.points[0], noteUI.activeStroke.points[0], true);
+  drawStrokeDot(noteUI.activeStroke, noteUI.activeStroke.points[0]);
   if (noteUI.wrap.setPointerCapture) noteUI.wrap.setPointerCapture(e.pointerId);
 }
 
@@ -3318,7 +3340,7 @@ function onNotePointerMove(e) {
   if (dist < 0.6) return;
   const smooth = { x: (prev.x + p.x) / 2, y: (prev.y + p.y) / 2, t: performance.now(), pressure: e.pressure || prev.pressure || 0.5 };
   pts.push(smooth);
-  drawStrokePoint(noteUI.activeStroke, prev, smooth, false);
+  drawLatestStrokeSegment(noteUI.activeStroke);
   queueNoteDraftSave();
 }
 
@@ -3327,10 +3349,7 @@ function onNotePointerUp(e) {
   e.preventDefault();
   e.stopPropagation();
   const pts = noteUI.activeStroke.points;
-  if (pts.length > 1) {
-    const end = pts[pts.length - 1];
-    drawStrokePoint(noteUI.activeStroke, pts[pts.length - 2], { ...end, pressure: 0.05 }, true);
-  }
+  if (pts.length > 1) drawStrokeTailSegment(noteUI.activeStroke);
   noteUI.strokeDraft.push(noteUI.activeStroke);
   if (noteUI.strokeDraft.length > NOTE_DRAFT_LIMIT) noteUI.strokeDraft.shift();
   noteUI.activeStroke = null;
@@ -3348,28 +3367,66 @@ function strokeWidth(stroke, point, taper = 1) {
   return Math.max(0.8, stroke.base * (0.7 + pressure * 0.7) * taper);
 }
 
-function drawStrokePoint(stroke, a, b, isDot) {
-  const startChunk = Math.max(0, Math.floor(Math.min(a.y, b.y) / NOTE_CHUNK_HEIGHT) - 1);
-  const endChunk = Math.floor(Math.max(a.y, b.y) / NOTE_CHUNK_HEIGHT) + 1;
+function strokeMidpoint(a, b) {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    pressure: ((a.pressure || 0.5) + (b.pressure || 0.5)) / 2
+  };
+}
+
+function drawStrokeDot(stroke, point) {
+  const chunkIndex = Math.max(0, Math.floor(point.y / NOTE_CHUNK_HEIGHT));
+  const drawRangeStart = Math.max(0, chunkIndex - 1);
+  const drawRangeEnd = chunkIndex + 1;
+  for (let i = drawRangeStart; i <= drawRangeEnd; i++) {
+    const chunk = ensureNoteChunk(i);
+    const yOff = i * NOTE_CHUNK_HEIGHT;
+    const ctx = chunk.ctx;
+    ctx.fillStyle = stroke.color;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y - yOff, strokeWidth(stroke, point, 0.6), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawStrokeCurve(stroke, from, control, to, widthPoint, taper = 1) {
+  const minY = Math.min(from.y, control.y, to.y);
+  const maxY = Math.max(from.y, control.y, to.y);
+  const startChunk = Math.max(0, Math.floor(minY / NOTE_CHUNK_HEIGHT) - 1);
+  const endChunk = Math.floor(maxY / NOTE_CHUNK_HEIGHT) + 1;
   for (let i = startChunk; i <= endChunk; i++) {
     const chunk = ensureNoteChunk(i);
     const yOff = i * NOTE_CHUNK_HEIGHT;
     const ctx = chunk.ctx;
     ctx.strokeStyle = stroke.color;
-    ctx.fillStyle = stroke.color;
-    if (isDot) {
-      ctx.beginPath();
-      ctx.arc(a.x, a.y - yOff, strokeWidth(stroke, a, 0.55), 0, Math.PI * 2);
-      ctx.fill();
-      continue;
-    }
-    const taper = stroke.points.length < 4 ? 0.7 : 1;
-    ctx.lineWidth = strokeWidth(stroke, b, taper);
+    ctx.lineWidth = strokeWidth(stroke, widthPoint || control, taper);
     ctx.beginPath();
-    ctx.moveTo(a.x, a.y - yOff);
-    ctx.quadraticCurveTo(a.x, a.y - yOff, b.x, b.y - yOff);
+    ctx.moveTo(from.x, from.y - yOff);
+    ctx.quadraticCurveTo(control.x, control.y - yOff, to.x, to.y - yOff);
     ctx.stroke();
   }
+}
+
+function drawLatestStrokeSegment(stroke) {
+  const pts = stroke.points;
+  if (pts.length < 2) return;
+  if (pts.length === 2) {
+    drawStrokeCurve(stroke, pts[0], pts[0], pts[1], pts[1], 0.72);
+    return;
+  }
+  const p0 = pts[pts.length - 3];
+  const p1 = pts[pts.length - 2];
+  const p2 = pts[pts.length - 1];
+  drawStrokeCurve(stroke, strokeMidpoint(p0, p1), p1, strokeMidpoint(p1, p2), p1, pts.length < 5 ? 0.8 : 1);
+}
+
+function drawStrokeTailSegment(stroke) {
+  const pts = stroke.points;
+  if (pts.length < 2) return;
+  const p1 = pts[pts.length - 2];
+  const p2 = pts[pts.length - 1];
+  drawStrokeCurve(stroke, strokeMidpoint(p1, p2), p2, p2, p2, 0.9);
 }
 
 function queueNoteDraftSave() {
@@ -3386,10 +3443,43 @@ function queueNoteDraftSave() {
   }, 220);
 }
 
+function attachSessionToBookContext(note, context) {
+  if (!context || context.workspace_type !== "books" || !context.parent_item_id) return;
+  const { payload } = ensureBooksPayload();
+  const books = payload.books || [];
+  const now = nowISO();
+  const sessionMeta = {
+    id: uid(),
+    session_id: note.id,
+    source_id: note.source_id,
+    workspace_type: "books",
+    parent_item_id: context.parent_item_id,
+    chapter_id: context.chapter_id || null,
+    chapter_name: context.chapter_name || null,
+    created_at: note.created_at,
+    timestamp: note.created_at,
+    stroke_json: note.strokes,
+    stroke_count: note.stroke_count,
+    preview: note.preview || null
+  };
+  const nextBooks = books.map(book => book.id === context.parent_item_id ? {
+    ...book,
+    handwritten_sessions: [sessionMeta, ...(book.handwritten_sessions || [])],
+    updated_at: now
+  } : book);
+  persistBooksPayload({
+    ...payload,
+    books: nextBooks,
+    selected_book_id: context.parent_item_id,
+    raw_handwritten_sessions: [sessionMeta, ...(payload.raw_handwritten_sessions || [])]
+  });
+}
+
 function saveActiveNote() {
   if (!state.notes.activeSourceId) return toast("Pick a source first");
   if (!noteUI.strokeDraft.length) return toast("Add handwriting first");
   const preview = renderNotePreview();
+  const context = noteUI.context ? { ...noteUI.context } : null;
   const note = {
     id: uid(),
     source_id: state.notes.activeSourceId,
@@ -3397,12 +3487,23 @@ function saveActiveNote() {
     updated_at: nowISO(),
     stroke_count: noteUI.strokeDraft.length,
     strokes: noteUI.strokeDraft,
-    preview
+    preview,
+    workspace_type: context?.workspace_type || null,
+    parent_item_id: context?.parent_item_id || null,
+    chapter_id: context?.chapter_id || null,
+    chapter_name: context?.chapter_name || null
   };
   state.notes.sessions.unshift(note);
   persistNoteSessions();
+  attachSessionToBookContext(note, context);
   localStorage.removeItem(KEYS.noteDraft);
   closeHandwritingNote();
+  if (context?.workspace_type === "books") {
+    state.activeTab = "today";
+    openWorkspace("books");
+    toast("Handwritten note saved to this book");
+    return;
+  }
   showProcessingSoon(note);
   if (state.activeTab === "more") renderActive();
 }
@@ -3424,14 +3525,28 @@ function renderNotePreview() {
   const ox = 12 - minX * scale, oy = 12 - minY * scale;
   noteUI.strokeDraft.forEach(stroke => {
     ctx.strokeStyle = stroke.color;
-    for (let i = 1; i < stroke.points.length; i++) {
-      const a = stroke.points[i - 1], b = stroke.points[i];
-      ctx.lineWidth = Math.max(0.8, stroke.base * 0.7 * scale);
+    const pts = stroke.points || [];
+    if (!pts.length) return;
+    const drawCurve = (from, control, to, widthPoint, taper = 1) => {
+      ctx.lineWidth = Math.max(0.8, strokeWidth(stroke, widthPoint || control, taper) * scale);
       ctx.beginPath();
-      ctx.moveTo(a.x * scale + ox, a.y * scale + oy);
-      ctx.lineTo(b.x * scale + ox, b.y * scale + oy);
+      ctx.moveTo(from.x * scale + ox, from.y * scale + oy);
+      ctx.quadraticCurveTo(control.x * scale + ox, control.y * scale + oy, to.x * scale + ox, to.y * scale + oy);
       ctx.stroke();
+    };
+    if (pts.length === 1) {
+      ctx.beginPath();
+      ctx.fillStyle = stroke.color;
+      ctx.arc(pts[0].x * scale + ox, pts[0].y * scale + oy, Math.max(0.8, strokeWidth(stroke, pts[0], 0.6) * scale), 0, Math.PI * 2);
+      ctx.fill();
+      return;
     }
+    drawCurve(pts[0], pts[0], pts[1], pts[1], 0.72);
+    for (let i = 2; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      drawCurve(strokeMidpoint(pts[i - 2], prev), prev, strokeMidpoint(prev, pts[i]), prev, i < 4 ? 0.82 : 1);
+    }
+    drawCurve(strokeMidpoint(pts[pts.length - 2], pts[pts.length - 1]), pts[pts.length - 1], pts[pts.length - 1], pts[pts.length - 1], 0.9);
   });
   return c.toDataURL("image/webp", 0.72);
 }
@@ -3768,6 +3883,7 @@ function ensureBooksPayload() {
   if (!payload.sort) { payload.sort = "recently_edited"; changed = true; }
   if (!payload.filter_label) { payload.filter_label = "all"; changed = true; }
   if (!("selected_book_id" in payload)) { payload.selected_book_id = null; changed = true; }
+  if (!Array.isArray(payload.raw_handwritten_sessions)) { payload.raw_handwritten_sessions = []; changed = true; }
   if (!payload.books.length && payload.book_title) {
     changed = true;
     payload.books.push({
@@ -3782,9 +3898,15 @@ function ensureBooksPayload() {
       label_ids: [],
       chapters: Array.isArray(payload.chapters) ? payload.chapters : [],
       compiled_notes: Array.isArray(payload.compiled_notes) ? payload.compiled_notes.join("\n") : String(payload.compiled_notes || ""),
-      manual_text_notes: Array.isArray(payload.manual_text_notes) ? payload.manual_text_notes : []
+      manual_text_notes: Array.isArray(payload.manual_text_notes) ? payload.manual_text_notes : [],
+      handwritten_sessions: []
     });
   }
+  payload.books = payload.books.map(book => {
+    if (Array.isArray(book.handwritten_sessions)) return book;
+    changed = true;
+    return { ...book, handwritten_sessions: [] };
+  });
   ws.payload = payload;
   if (changed) updateWorkspaceEntity("workspaces", ws.id, { payload });
   return { ws, payload };
@@ -3833,7 +3955,8 @@ function newBookTemplate() {
     label_ids: [],
     chapters: [],
     compiled_notes: "## Chapter 1\n",
-    manual_text_notes: []
+    manual_text_notes: [],
+    handwritten_sessions: []
   };
 }
 
@@ -3845,6 +3968,55 @@ function booksDocHTML(text) {
     }
     return `<div class="doc-line-text">${escapeHTML(line || " ")}</div>`;
   }).join("");
+}
+
+function ensureBookNoteSource(book) {
+  const existing = state.notes.sources.find(s => s.workspace_type === "books" && s.parent_item_id === book.id);
+  if (existing) return existing;
+  const source = {
+    id: uid(),
+    name: book.title || "Untitled Book",
+    kind: "Book",
+    workspace_type: "books",
+    parent_item_id: book.id,
+    created_at: nowISO()
+  };
+  state.notes.sources.unshift(source);
+  persistNoteSources();
+  return source;
+}
+
+function openBookHandwritingFlow(book, chapters = []) {
+  const chapterOptions = [{ id: "", title: "No chapter selected" }, ...(chapters || [])];
+  openSheet(`
+    <h2>Handwritten note</h2>
+    <p class="lede">${escapeHTML(book.title || "Untitled Book")}</p>
+    <div class="field">
+      <label>Chapter (optional)</label>
+      <select class="input" id="book-note-chapter">
+        ${chapterOptions.map(ch => `<option value="${escapeHTML(ch.id || "")}">${escapeHTML(ch.title || "No chapter selected")}</option>`).join("")}
+      </select>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="book-note-cancel">Cancel</button>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" id="book-note-open">Open handwriting</button>
+    </div>
+  `, () => {
+    document.getElementById("book-note-cancel").addEventListener("click", closeSheet);
+    document.getElementById("book-note-open").addEventListener("click", () => {
+      const chapterId = document.getElementById("book-note-chapter").value || null;
+      const chapter = (chapters || []).find(ch => ch.id === chapterId) || null;
+      const source = ensureBookNoteSource(book);
+      closeSheet();
+      startHandwritingNote(source.id, {
+        workspace_type: "books",
+        parent_item_id: book.id,
+        chapter_id: chapter?.id || null,
+        chapter_name: chapter?.title || null
+      });
+    });
+  });
 }
 
 function renderBooksWorkspacePage(root) {
@@ -3897,6 +4069,20 @@ function renderBooksWorkspacePage(root) {
           <div>
             <div class="section-title" style="margin:0 0 8px"><h4>Compiled Notes</h4></div>
             <div class="book-doc">${booksDocHTML(selected.compiled_notes)}</div>
+          </div>
+          <div>
+            <div class="section-title" style="margin:0 0 8px"><h4>Handwritten Sessions</h4></div>
+            <div class="list">
+              ${(selected.handwritten_sessions || []).length ? selected.handwritten_sessions.slice(0, 10).map(session => `
+                <div class="list-row note-list-item">
+                  ${session.preview ? `<img class="note-thumb" src="${session.preview}" alt="Handwritten preview"/>` : `<div class="note-thumb"></div>`}
+                  <div class="grow">
+                    <div class="title">${new Date(session.timestamp || session.created_at).toLocaleString()}</div>
+                    <div class="meta">${session.chapter_name ? escapeHTML(session.chapter_name) + " · " : ""}${session.stroke_count || 0} strokes · Local JSON stored</div>
+                  </div>
+                </div>
+              `).join("") : `<div class="empty">No handwritten sessions yet.</div>`}
+            </div>
           </div>
           <div class="sheet-actions">
             <button class="btn btn-sm" id="book-add-note">Add Note</button>
@@ -3984,17 +4170,7 @@ function renderBooksWorkspacePage(root) {
     renderActive();
   });
   root.querySelector("#book-add-note").addEventListener("click", () => {
-    const note = prompt("Add text note:");
-    if (!note) return;
-    const next = (payload.books || []).map(b => b.id === selected.id ? {
-      ...b,
-      manual_text_notes: [...(b.manual_text_notes || []), { id: uid(), text: note, created_at: nowISO() }],
-      compiled_notes: `${b.compiled_notes || ""}\n${note}\n`,
-      updated_at: nowISO()
-    } : b);
-    persistBooksPayload({ ...payload, books: next });
-    toast("Note added");
-    renderActive();
+    openBookHandwritingFlow(selected, selected.chapters || []);
   });
   root.querySelector("#book-manage-labels").addEventListener("click", () => {
     if (!(payload.labels || []).length) return toast("Create labels first");
