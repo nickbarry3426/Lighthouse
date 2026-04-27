@@ -2,7 +2,7 @@
   "name": "Lighthouse Six Pillars OS",
   "short_name": "Lighthouse",
   "description": "A private personal command center for body, reflection, wins, lessons, and daily life data.",
-  "start_url": "./six-pillars-audit.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0b1428",
